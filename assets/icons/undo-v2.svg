@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   viewBox="0 0 74.999939 65"
+   width="74.999939"
+   height="65"
+   version="1.1"
+   id="svg1"
+   xmlns="http://www.w3.org/2000/svg"
+   xmlns:svg="http://www.w3.org/2000/svg">
+  <defs
+     id="defs1" />
+  <path
+     d="M 0.99995155,21.999873 23.999952,0.99987334 V 13.999873 h 25 a 25,25 0 0 1 0,50 h -27 v -16 h 27 a 9,9 0 0 0 0,-18 h -25 v 13 z"
+     fill="#ffffff"
+     stroke="#ffffff"
+     stroke-width="2"
+     stroke-linejoin="round"
+     stroke-linecap="round"
+     id="path1" />
+</svg>

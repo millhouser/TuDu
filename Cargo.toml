@@ -1,0 +1,29 @@
+[package]
+name = "tudu"
+version = "0.1.0"
+edition = "2021"
+description = "TuDu – lokale Aufgabenverwaltung mit Slint"
+
+[dependencies]
+slint       = { version = "1.15", features = ["gettext"] }
+serde       = { version = "1", features = ["derive"] }
+serde_json  = "1"
+chrono      = { version = "0.4", features = ["serde"] }
+dirs        = "5"
+uuid        = { version = "1", features = ["v4"] }
+rfd         = "0.14"
+image       = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+notify-rust = "4"
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = [
+    "winuser", "shellapi", "wingdi",
+    "libloaderapi", "errhandlingapi", "winreg",
+    "synchapi", "winerror"
+] }
+
+[build-dependencies]
+slint-build = "1.15"
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"

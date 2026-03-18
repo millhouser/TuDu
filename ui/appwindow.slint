@@ -1,0 +1,2137 @@
+import { ScrollView, TextEdit, TimePickerPopup } from "std-widgets.slint";
+
+// ─── Data structures ─────────────────────────────────────────────────────────
+
+struct Task {
+    id:             string,
+    text:           string,
+    done:           bool,
+    due-label:      string,   // nur Datum: "6. Mär"
+    due-time-label: string,   // nur Uhrzeit: "09:00" oder ""
+    due-overdue:    bool,
+    due-today:      bool,
+    has-image:      bool,
+    color-hex:      string,   // "" = keine Farbe
+}
+
+struct DayData {
+    day-name:    string,
+    date-label:  string,
+    date-str:    string,
+    is-today:    bool,
+    is-past:     bool,
+    tasks:       [Task],
+    undone-count: int,
+}
+
+struct SomedayList {
+    id:    string,
+    title: string,
+    tasks: [Task],
+}
+
+// ─── Theme ────────────────────────────────────────────────────────────────────
+
+export global Theme {
+    out property <color> bg:         #f8f6f1;
+    out property <color> surface:    #ffffff;
+    out property <color> ink:        #1c1c1c;
+    out property <color> ink-muted:  #888884;
+    out property <color> ink-ghost:  #c8c6c0;
+    in-out property <color> accent:   #1c1c1c;
+    in-out property <color> today-bg: #1c1c1c;
+    out property <color> today-ink:  #f8f6f1;
+    out property <color> border:     #e4e2db;
+    out property <color> done-ink:   #b0aea8;
+    out property <color> hover-bg:   #f1ede5;
+    out property <color> drop-tint:  #eaf3ec;
+    out property <color> drop-line:  #4caf78;
+    out property <color> btn-hover:  #383838;
+    // Titelleiste und Listentitel = Akzentfarbe
+    out property <color> hdr-bg:     self.accent;
+    // Hover auf hdr-bg etwas aufhellen/abdunkeln
+    out property <color> hdr-btn-hover: self.accent.darker(15%);
+    out property <color> due-ok:     #888884;
+    out property <color> due-today:  #e07b00;
+    out property <color> due-over:   #c0392b;
+}
+
+struct ColorOption { hex: string, col: color }
+
+global ColorOptions {
+    out property <[ColorOption]> swatches: [
+        { hex: "#1c1c1c", col: #1c1c1c },
+        { hex: "#2563eb", col: #2563eb },
+        { hex: "#16a34a", col: #16a34a },
+        { hex: "#dc2626", col: #dc2626},
+        { hex: "#7c3aed", col: #7c3aed },
+        { hex: "#ea580c", col: #ea580c },
+        { hex: "#0891b2", col: #0891b2 },
+        { hex: "#db2777", col: #db2777 },
+    ];
+}
+
+// ─── DragState ────────────────────────────────────────────────────────────────
+
+export global DragState {
+    in-out property <bool>   active:          false;
+    in-out property <string> task-id:         "";
+    in-out property <string> task-text:       "";
+    in-out property <bool>   task-done:       false;
+    in-out property <int>    source-col:      -1;
+    in-out property <int>    source-list-idx: -1;
+    in-out property <int>    source-task-idx: -1;
+    in-out property <int>    target-task-idx: -1;
+    in-out property <int>    target-col:      -1;   // Welche Spalte ist aktuelles Drop-Ziel
+    in-out property <int>    target-list-idx: -1;   // Welche Someday-Liste ist Ziel
+    in-out property <length> cursor-x:        0px;
+    in-out property <length> cursor-y:        0px;
+    // Absolut-X der Quellspalte + Spaltenbreite (für target-col-Berechnung)
+    in-out property <length> col-left-x:      0px;
+    in-out property <length> col-width:       0px;
+    // Absolut-Y der Drop-Linie (gesetzt von TaskRow._cy)
+    in-out property <length> drop-line-y:      0px;
+    // Absolut-Y der Grenze unerledigt/erledigt (gesetzt vom Grenztask)
+    in-out property <length> zone-boundary-y: 100000px;
+}
+
+// ─── ListDragState ────────────────────────────────────────────────────────────
+global ListDragState {
+    in-out property <bool>   active:      false;
+    in-out property <int>    source-idx:  -1;
+    in-out property <int>    target-idx:  0;
+    in-out property <length> cursor-x:    0px;
+    in-out property <length> cursor-y:    0px;
+    in-out property <length> drop-x:      0px;
+}
+
+// ─── HdrBtn ──────────────────────────────────────────────────────────────────
+
+// Globaler Tooltip-State (von HdrBtn gesetzt, von AppWindow gerendert)
+global TooltipState {
+    in-out property <string> text: "";
+    in-out property <length> ax: 0px;   // absolute x-Mitte des Buttons
+    in-out property <length> ay: 0px;   // absolute y-Unterkante des Buttons
+}
+
+component HdrBtn {
+    in property <bool> has-icon: false;
+    in property <image> icon;
+    in property <string> label;
+    in property <string> tooltip: "";
+    in property <bool>   active: false;
+    in property <bool>   enabled: true;
+    callback clicked();
+    min-width: 36px;
+    min-height: 36px;
+
+    btn := TouchArea {
+        enabled: root.enabled;
+        width: parent.width;
+        height: parent.height;
+        Rectangle {
+            x: 2px; y: (parent.height - 36px) / 2;
+            width: parent.width - 4px; height: 36px;
+            border-radius: 5px;
+            border-width: btn.has-hover ? 1px : 0px;
+            border-color: #ffffff50;
+            background: btn.has-hover ? Theme.hdr-btn-hover : transparent;
+            animate background { duration: 80ms; }
+            animate border-width { duration: 80ms; }
+            if root.has-icon: Image {
+                source: root.icon;
+                width: 22px; height: 22px;
+                opacity: root.enabled ? 1.0 : 0.4;
+                horizontal-alignment: center; vertical-alignment: center;
+            }
+            if !root.has-icon: Text { text: root.label; font-size: 22px; letter-spacing: 0.3px;
+                       font-weight: root.active ? 700 : 400;
+                       color: !root.enabled ? #555555 : root.active ? #ffffff : Theme.today-ink;
+                       horizontal-alignment: center; vertical-alignment: center;
+                       height: 32px; }
+        }
+        // Tooltip-State global setzen/löschen
+        changed has-hover => {
+            if self.has-hover && root.tooltip != "" {
+                TooltipState.text = root.tooltip;
+                TooltipState.ax   = root.absolute-position.x + root.width / 2;
+                TooltipState.ay   = root.absolute-position.y + root.height;
+            } else if TooltipState.text == root.tooltip {
+                TooltipState.text = "";
+            }
+        }
+        clicked => { root.clicked(); }
+    }
+}
+
+// ─── TaskRow ─────────────────────────────────────────────────────────────────
+//
+//  Editiermodus:  TextInput (kein Rahmen/Padding), init=>focus(), changed-editing speichert.
+//  Drop-Target:   _cy (changed cursor-y) – jeder Task prüft ob cursor >= sein abs-y.
+//                 Da Slint in Dokumentreihenfolge verarbeitet, gewinnt der LETZTE passende
+//                 Task → korrekter Einfügepunkt ohne feste Höhenannahme.
+//  Zone-Grenze:   is-zone-boundary=true am ersten Done-Task → tracking-zone setzt zone-boundary-y.
+
+// ─── ColourPicker ────────────────────────────────────────────────────────────
+// Kleines Popup mit 16 Vorschlägen + "keine Farbe"
+
+component ColourPicker inherits PopupWindow {
+    callback picked(string);   // hex-String oder "" für "keine Farbe"
+
+    width: 176px; height: 148px;
+    close-policy: close-on-click;
+
+    // 16 Farben + Löschen-Feld, 4×5 Raster à 32px
+    pure function colors(i: int) -> string {
+        i ==  0 ? "#e74c3c" :
+        i ==  1 ? "#e91e63" :
+        i ==  2 ? "#9b59b6" :
+        i ==  3 ? "#3498db" :
+        i ==  4 ? "#e67e22" :
+        i ==  5 ? "#ff9800" :
+        i ==  6 ? "#f1c40f" :
+        i ==  7 ? "#2196f3" :
+        i ==  8 ? "#1abc9c" :
+        i ==  9 ? "#2ecc71" :
+        i == 10 ? "#4caf50" :
+        i == 11 ? "#009688" :
+        i == 12 ? "#607d8b" :
+        i == 13 ? "#795548" :
+        i == 14 ? "#90a4ae" :
+                  "#b0bec5"
+    }
+
+    Rectangle {
+        border-radius: 8px; border-width: 1px; border-color: Theme.border;
+        background: Theme.surface;
+        drop-shadow-blur: 20px; drop-shadow-offset-y: 6px; drop-shadow-color: #00000025;
+        clip: true;
+
+        VerticalLayout {
+            padding: 8px; spacing: 6px;
+
+            Text {
+                text: "Farbe wählen";
+                font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
+                color: Theme.ink-muted; horizontal-alignment: left;
+            }
+
+            // 4×4 Farb-Gitter
+            VerticalLayout {
+                spacing: 4px;
+                for row in [0, 1, 2, 3]: HorizontalLayout {
+                    spacing: 4px;
+                    for col in [0, 1, 2, 3]: cell-ta := TouchArea {
+                        width: 28px; height: 28px;
+                        property <int>    idx: row * 4 + col;
+                        property <string> hex: colors(idx);
+                        pure function cell-color() -> color {
+                            idx ==  0 ? #e74c3c :
+                            idx ==  1 ? #e91e63 :
+                            idx ==  2 ? #9b59b6 :
+                            idx ==  3 ? #3498db :
+                            idx ==  4 ? #e67e22 :
+                            idx ==  5 ? #ff9800 :
+                            idx ==  6 ? #f1c40f :
+                            idx ==  7 ? #2196f3 :
+                            idx ==  8 ? #1abc9c :
+                            idx ==  9 ? #2ecc71 :
+                            idx == 10 ? #4caf50 :
+                            idx == 11 ? #009688 :
+                            idx == 12 ? #607d8b :
+                            idx == 13 ? #795548 :
+                            idx == 14 ? #90a4ae :
+                                        #b0bec5
+                        }
+                        Rectangle {
+                            border-radius: 5px;
+                            background: cell-ta.cell-color();
+                            border-width: cell-ta.has-hover ? 2px : 1px;
+                            border-color: cell-ta.has-hover ? Theme.ink : #00000030;
+                            animate border-width { duration: 60ms; }
+                        }
+                        clicked => { root.picked(self.hex); root.close(); }
+                    }
+                }
+            }
+
+            // "Keine Farbe" Zeile
+            none-ta := TouchArea {
+                height: 24px;
+                Rectangle {
+                    border-radius: 5px; border-width: 1px;
+                    border-color: none-ta.has-hover ? Theme.ink : Theme.border;
+                    background: none-ta.has-hover ? Theme.hover-bg : transparent;
+                    animate background { duration: 60ms; }
+                    HorizontalLayout {
+                        padding-left: 8px; spacing: 6px; alignment: center;
+                        Text { text: "Keine Farbe"; font-size: 11px; color: Theme.ink-muted;
+                               vertical-alignment: center; }
+                    }
+                }
+                clicked => { root.picked(""); root.close(); }
+            }
+        }
+    }
+}
+
+component TaskRow inherits Rectangle {
+    in property <Task>   task;
+    in property <int>    col-index;
+    in property <int>    source-list-idx: -1;
+    in property <int>    task-idx:        0;
+    in-out property <string> editing-id:  "";
+    in property <length> days-list-top-y: 0px;
+    in property <length> days-col-left-x: 0px;
+    in property <length> days-col-width:  160px;
+    // Zeigt dem TaskRow ob er der erste Done-Task (= Zonengrenze) ist
+    in property <bool>   is-zone-boundary: false;
+
+    callback toggled();
+    callback deleted();
+    callback drag-dropped();
+    callback set-due();
+    callback due-cleared();   // Datum entfernen (aus lokalem due-options-popup)
+    callback renamed(string);
+    callback start-editing();
+    callback stop-editing();
+    callback attach-image();
+    callback view-image();
+    callback image-file-dropped(string);
+    callback set-color(string);   // hex oder "" für keine Farbe
+
+    property <bool> editing: editing-id == task.id && task.id != "";
+    property <string> edit-text: "";
+    property <bool> hovering: (ta.has-hover || date-ta.has-hover || grip-ta.has-hover || overlay-ta.has-hover) && !grip-ta.drag-mode;
+    // show-overlay: Zustandsvariable (kein reaktives Binding → keine Zirkularität).
+    // Wird true durch date-ta.changed has-hover, false durch overlay-ta.changed has-hover.
+    property <bool> show-overlay: false;
+    // show-overlay Schließen: wenn ALLE TouchAreas keinen Hover haben.
+    // changed hovering ist race-condition-frei: Slint wertet es nach allen
+    // Input-Events eines Frames aus → kein gleichzeitiger Flip-Konflikt.
+    changed hovering => { if !self.hovering { root.show-overlay = false; } }
+
+
+    // Editiermodus-Übergang: Puffer initialisieren / speichern
+    changed editing => {
+        if self.editing {
+            root.edit-text = root.task.text;
+        } else if root.edit-text != root.task.text {
+            root.renamed(root.edit-text);
+        }
+    }
+
+    // ── Zone-Grenze tracken ───────────────────────────────────────────────────
+    // Wenn dieser Task die Grenze zw. unerledigt/erledigt ist, merken wir uns
+    // seine absolute Y-Position in DragState.zone-boundary-y.
+    property <bool> tracking-zone: DragState.active && root.is-zone-boundary;
+    changed tracking-zone => {
+        if tracking-zone {
+            DragState.zone-boundary-y = ta.absolute-position.y;
+        }
+    }
+
+    // ── Drop-Target-Berechnung via _cy ─────────────────────────────────────────
+    // _cy reagiert auf jede cursor-y-Änderung.
+    // Jeder Task prüft: ist cursor >= mein abs-y?
+    // Slint verarbeitet Elemente in Dokumentreihenfolge (Task 0 → N).
+    // Der LETZTE Task dessen abs-y <= cursor-y überschreibt zuletzt → korrekter Index.
+    // Kein Teilen durch feste Höhe – funktioniert mit beliebig hohen Tasks.
+    property <length> _cy: DragState.cursor-y;
+    changed _cy => {
+        if DragState.active && DragState.task-id != task.id {
+            // ── Tages-Spalte ──────────────────────────────────────────────────
+            if root.col-index >= 0 && DragState.target-col == root.col-index && task.done == DragState.task-done {
+                if DragState.cursor-y >= ta.absolute-position.y {
+                    DragState.target-task-idx = root.task-idx + 1;
+                    DragState.drop-line-y     = ta.absolute-position.y + root.height;
+                } else if root.task-idx == 0 {
+                    DragState.target-task-idx = 0;
+                    DragState.drop-line-y     = ta.absolute-position.y;
+                }
+            }
+            // ── Someday-Liste (gleiche Liste, Umsortierung) ───────────────────
+            if root.col-index < 0 && root.source-list-idx >= 0
+               && root.source-list-idx == DragState.source-list-idx {
+                if DragState.cursor-y >= ta.absolute-position.y {
+                    DragState.target-task-idx = root.task-idx + 1;
+                    DragState.drop-line-y     = ta.absolute-position.y + root.height;
+                } else if root.task-idx == 0 {
+                    DragState.target-task-idx = 0;
+                    DragState.drop-line-y     = ta.absolute-position.y;
+                }
+            }
+        }
+    }
+
+    height: max(36px, display-txt.preferred-height + 18px);
+    clip: false;
+
+    opacity: DragState.active && DragState.task-id == task.id ? 0.28 : 1.0;
+    animate opacity { duration: 130ms; }
+
+    // ── Farbstreifen (4px links) ──────────────────────────────────────────────
+    if task.color-hex != "": Rectangle {
+        x: 0; y: 0; width: 4px; height: root.height;
+        border-radius: 2px;
+        background:
+            task.color-hex == "#e74c3c" ? #e74c3c :
+            task.color-hex == "#e91e63" ? #e91e63 :
+            task.color-hex == "#9b59b6" ? #9b59b6 :
+            task.color-hex == "#3498db" ? #3498db :
+            task.color-hex == "#e67e22" ? #e67e22 :
+            task.color-hex == "#ff9800" ? #ff9800 :
+            task.color-hex == "#f1c40f" ? #f1c40f :
+            task.color-hex == "#2196f3" ? #2196f3 :
+            task.color-hex == "#1abc9c" ? #1abc9c :
+            task.color-hex == "#2ecc71" ? #2ecc71 :
+            task.color-hex == "#4caf50" ? #4caf50 :
+            task.color-hex == "#009688" ? #009688 :
+            task.color-hex == "#607d8b" ? #607d8b :
+            task.color-hex == "#795548" ? #795548 :
+            task.color-hex == "#90a4ae" ? #90a4ae :
+            task.color-hex == "#b0bec5" ? #b0bec5 :
+            transparent;
+    }
+
+    // ta: Checkbox + Textbereich (alles links der Datumsspalte)
+    ta := TouchArea {
+        x: 0; y: 0;
+        width: root.width - 46px;
+        height: root.height;
+        enabled: true;
+
+        changed has-hover => {
+            if self.has-hover && !task.done && !DragState.active && self.mouse-x >= 54px {
+                root.start-editing();
+            }
+        }
+
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel)
+               && e.button == PointerEventButton.left
+               && !grip-ta.drag-mode {
+                if self.mouse-x >= 24px && self.mouse-x < 54px {
+                    root.toggled();
+                } else if self.mouse-x >= 54px && !task.done {
+                    root.start-editing();
+                }
+            }
+        }
+    }
+
+    // date-ta: nur die 46px Datumsspalte.
+    // Kein Überlapp mit ta → kein Hover-Konflikt mit Textbereich.
+    // Hover hier SETZT show-overlay=true (nie false — das macht overlay-ta).
+    date-ta := TouchArea {
+        x: root.width - 46px; y: 0;
+        width: 46px; height: root.height;
+        changed has-hover => {
+            if self.has-hover { root.show-overlay = true; }
+        }
+    }
+
+    background: root.hovering && !root.editing ? Theme.hover-bg : transparent;
+    animate background { duration: 80ms; }
+
+    HorizontalLayout {
+        spacing: 0px;
+
+        // ── Drag-Handle 24px (6-Punkte-Griff) ────────────────────────────────
+        // Visuelle Darstellung des Griff-Icons; Events kommen von grip-ta (höhere Z-Order).
+        Rectangle {
+            width: 24px; horizontal-stretch: 0;
+            // 6 Punkte: 2 Spalten × 3 Reihen, je 3×3px, Abstand 2.5px
+            // Gesamt: B=8.5px H=14px, zentriert in 24px
+            property <color> dot-color: grip-ta.has-hover ? Theme.ink-muted : Theme.ink-ghost;
+            // Reihe 0
+            Rectangle { width:3px; height:3px; border-radius:1.5px; background: parent.dot-color;
+                        x: 7.75px; y: (parent.height - 14px) / 2; }
+            Rectangle { width:3px; height:3px; border-radius:1.5px; background: parent.dot-color;
+                        x: 13.25px; y: (parent.height - 14px) / 2; }
+            // Reihe 1
+            Rectangle { width:3px; height:3px; border-radius:1.5px; background: parent.dot-color;
+                        x: 7.75px; y: (parent.height - 14px) / 2 + 5.5px; }
+            Rectangle { width:3px; height:3px; border-radius:1.5px; background: parent.dot-color;
+                        x: 13.25px; y: (parent.height - 14px) / 2 + 5.5px; }
+            // Reihe 2
+            Rectangle { width:3px; height:3px; border-radius:1.5px; background: parent.dot-color;
+                        x: 7.75px; y: (parent.height - 14px) / 2 + 11px; }
+            Rectangle { width:3px; height:3px; border-radius:1.5px; background: parent.dot-color;
+                        x: 13.25px; y: (parent.height - 14px) / 2 + 11px; }
+        }
+
+        // ── Checkbox 30px ────────────────────────────────────────────────────
+        Rectangle {
+            width: 30px;
+            horizontal-stretch: 0;
+            Rectangle {
+                width: 17px; height: 17px;
+                x: (parent.width - 17px) / 2;
+                y: (parent.height - 17px) / 2;
+                border-radius: 3px; border-width: 1.5px;
+                border-color: task.done ? Theme.accent : Theme.ink-ghost;
+                background:   task.done ? Theme.accent : transparent;
+                animate background   { duration: 100ms; }
+                animate border-color { duration: 100ms; }
+                Image { source: @image-url("../assets/icons/check.svg"); visible: task.done;
+                       width: 10px; height: 10px;
+                       horizontal-alignment: center; vertical-alignment: center; }
+            }
+        }
+
+        // ── Textbereich (stretch=1) ───────────────────────────────────────────
+        txt-col := Rectangle {
+            horizontal-stretch: 1;
+            clip: true;
+
+            // display-txt: immer im Baum, treibt Zeilenhöhe und TextInput-Höhe.
+            // Zeigt edit-text beim Editieren → wächst live mit bei Zeilenumbrüchen.
+            // Liegt VOR edit-input → niedrigere Z-Reihenfolge → edit-input ist oben.
+            display-txt := Text {
+                x: 0; y: 9px;
+                width: parent.width;
+                visible: !root.editing;
+                text: root.editing ? root.edit-text : task.text;
+                font-size: 13px;
+                color: task.done ? Theme.done-ink : Theme.ink;
+                wrap: word-wrap;
+                font-italic: task.done;
+            }
+
+            // TextInput: NUR wenn editing=true (if-Block).
+            // Ohne TextInput im DOM → ta erhält Hover/Klick im Textbereich → korrekte Hover-Erkennung.
+            // Mit TextInput im DOM (editing) → TextInput liegt in HorizontalLayout (höhere Z-Order
+            // als ta) → Klick trifft TextInput direkt → Slint positioniert Cursor nativ.
+            // Da Hover BEVOR Klick feuert, ist TextInput bereits aktiv wenn Klick ankommt.
+            if root.editing: edit-input := TextInput {
+                x: 0; y: 9px;
+                width: parent.width;
+                height: max(18px, display-txt.preferred-height);
+                font-size: 13px;
+                color: Theme.ink;
+                wrap: word-wrap;
+                single-line: false;
+                init => {
+                    self.text = root.task.text;
+                    root.edit-text = root.task.text;
+                    self.focus();
+                    // Cursor ans Ende; nachfolgender Klick setzt ihn exakt
+                    self.set-selection-offsets(999999, 999999);
+                }
+                changed text => { if root.editing { root.edit-text = self.text; } }
+                key-pressed(e) => {
+                    if e.text == Key.Escape || (e.text == Key.Return && e.modifiers.control) {
+                        root.stop-editing();
+                        accept
+                    } else { reject }
+                }
+            }
+        }
+
+        // ── Datum/Uhrzeit-Spalte (46px fest, nie größer) ─────────────────────
+        // Nur Datum + ggf. 📎. Icons kommen als absolutes Overlay (s.u.).
+        // 46px ändert NICHT die Layout-min-width bei Hover → kein ScrollView-Overflow.
+        Rectangle {
+            width: 46px; horizontal-stretch: 0;
+            VerticalLayout {
+                alignment: center; spacing: 0px; padding-right: 4px;
+                HorizontalLayout {
+                    alignment: end; spacing: 2px;
+                    if task.has-image && task.due-label == "": Image {
+                        source: @image-url("../assets/icons/clip.svg"); width: 11px; height: 11px;
+                        vertical-alignment: center; opacity: 0.7;
+                    }
+                    Text {
+                        text: task.due-label; font-size: 9px; horizontal-alignment: right;
+                        color: task.due-overdue ? Theme.due-over
+                             : task.due-today   ? Theme.due-today
+                             :                    Theme.due-ok;
+                    }
+                }
+                if task.due-time-label != "": Text {
+                    text: task.due-time-label; font-size: 9px; horizontal-alignment: right;
+                    color: task.due-overdue ? Theme.due-over
+                         : task.due-today   ? Theme.due-today
+                         :                    Theme.due-ok;
+                }
+                if task.has-image && task.due-label != "": Image {
+                    source: @image-url("../assets/icons/clip.svg"); width: 10px; height: 10px;
+                    horizontal-alignment: right; opacity: 0.7;
+                }
+            }
+        }
+
+    }
+
+
+    // ColourPicker-Popup für diesen Task
+    colour-picker := ColourPicker {
+        x: root.width - 180px; y: root.height;
+        picked(hex) => { root.set-color(hex); }
+    }
+
+    // ── Due-Date-Optionen Popup (lokal, direkt am Task) ─────────────────────
+    // Erscheint wenn Aufgabe bereits ein Fälligkeitsdatum hat.
+    // x: root.width - 170px → rechtsbündig; y: root.height → direkt darunter.
+    due-opts-popup := PopupWindow {
+        x: max(0px, root.width - 170px); y: root.height;
+        width: 170px; height: 86px;
+        close-policy: close-on-click;
+        Rectangle {
+            border-radius: 8px; border-width: 1px; border-color: Theme.border;
+            background: Theme.surface;
+            drop-shadow-blur: 16px; drop-shadow-offset-y: 4px; drop-shadow-color: #00000018;
+            VerticalLayout {
+                padding: 8px; spacing: 4px;
+                opt-change-ta := TouchArea {
+                    height: 32px;
+                    Rectangle {
+                        border-radius: 5px;
+                        background: opt-change-ta.has-hover ? Theme.hover-bg : transparent;
+                        animate background { duration: 60ms; }
+                        HorizontalLayout {
+                            padding-left: 10px; padding-top: 6px; padding-bottom: 6px; spacing: 6px;
+                            Image { source: @image-url("../assets/icons/calendar.svg"); width: 20px; height: 20px; }
+                            Text { text: "Datum ändern"; font-size: 12px; color: Theme.ink;
+                                   vertical-alignment: center; }
+                        }
+                    }
+                    clicked => { due-opts-popup.close(); root.set-due(); }
+                }
+                opt-clear-ta := TouchArea {
+                    height: 32px;
+                    Rectangle {
+                        border-radius: 5px;
+                        background: opt-clear-ta.has-hover ? Theme.hover-bg : transparent;
+                        animate background { duration: 60ms; }
+                        HorizontalLayout {
+                            padding-left: 10px; padding-top: 6px; padding-bottom: 6px; spacing: 6px;
+                            Image { source: @image-url("../assets/icons/x.svg"); width: 20px; height: 20px; opacity: 0.8; }
+                            Text { text: "Datum entfernen"; font-size: 12px; color: Theme.ink;
+                                   vertical-alignment: center; }
+                        }
+                    }
+                    clicked => { due-opts-popup.close(); root.due-cleared(); }
+                }
+            }
+        }
+    }
+
+    // ── Icon-Overlay ──────────────────────────────────────────────────────────
+    // visible: root.show-overlay — KEINE Zirkularität (show-overlay ist Zustandsvariable).
+    // Eintritt: date-ta.changed has-hover setzt show-overlay=true.
+    // Austritt: overlay-ta.changed has-hover löscht show-overlay=false (wenn date-ta auch weg).
+    // x: max(0px, ...) → bei kleinem Fenster nie außerhalb links.
+    overlay-rect := Rectangle {
+        visible: root.show-overlay;
+        x: max(0px, root.width - 116px); y: 0;
+        width: 116px; height: root.height;
+        background: Theme.hover-bg;
+
+        overlay-ta := TouchArea {
+            width: parent.width; height: parent.height;
+            pointer-event(e) => {
+                if (e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel)
+                   && e.button == PointerEventButton.left
+                   && !grip-ta.drag-mode {
+                    if self.mouse-x >= 87px {
+                        root.deleted();
+                    } else if self.mouse-x >= 58px && !task.done {
+                        if task.due-label != "" {
+                            // Datum vorhanden → lokales Optionen-Popup nahe dem Task
+                            due-opts-popup.show();
+                        } else {
+                            root.set-due();
+                        }
+                    } else if self.mouse-x >= 29px {
+                        if task.has-image { root.view-image(); }
+                        else if !task.done { root.attach-image(); }
+                    } else {
+                        colour-picker.show();
+                    }
+                }
+            }
+        }
+
+        // 🎨 Farbkreis (0..29)
+        Rectangle {
+            x: 7px; y: (parent.height - 16px) / 2;
+            width: 16px; height: 16px; border-radius: 8px;
+            border-width: 1.5px;
+            border-color: overlay-ta.mouse-x < 29px ? Theme.ink : #88888888;
+            background:
+                    task.color-hex == "#e74c3c" ? #e74c3c :
+                    task.color-hex == "#e91e63" ? #e91e63 :
+                    task.color-hex == "#9b59b6" ? #9b59b6 :
+                    task.color-hex == "#3498db" ? #3498db :
+                    task.color-hex == "#e67e22" ? #e67e22 :
+                    task.color-hex == "#ff9800" ? #ff9800 :
+                    task.color-hex == "#f1c40f" ? #f1c40f :
+                    task.color-hex == "#2196f3" ? #2196f3 :
+                    task.color-hex == "#1abc9c" ? #1abc9c :
+                    task.color-hex == "#2ecc71" ? #2ecc71 :
+                    task.color-hex == "#4caf50" ? #4caf50 :
+                    task.color-hex == "#009688" ? #009688 :
+                    task.color-hex == "#607d8b" ? #607d8b :
+                    task.color-hex == "#795548" ? #795548 :
+                    task.color-hex == "#90a4ae" ? #90a4ae :
+                    task.color-hex == "#b0bec5" ? #b0bec5 :
+                    Theme.surface;
+        }
+        // 📎 Büroklammer (29..58)
+        Image {
+            x: 34px; width: 18px; height: 18px;
+            source: @image-url("../assets/icons/clip.svg");
+            horizontal-alignment: center; vertical-alignment: center;
+            opacity: task.has-image ? 1.0
+                 : (overlay-ta.mouse-x >= 29px && overlay-ta.mouse-x < 58px) ? 0.7 : 0.4;
+        }
+        // 📅 Kalender (58..87)
+        Image {
+            x: 63px; width: 18px; height: 18px;
+            source: @image-url("../assets/icons/calendar.svg");
+            horizontal-alignment: center; vertical-alignment: center;
+            opacity: task.done ? 0.4
+                 : (overlay-ta.mouse-x >= 58px && overlay-ta.mouse-x < 87px) ? 1.0 : 0.6;
+        }
+        // × Löschen (87..116)
+        Image {
+            x: 92px; width: 18px; height: 18px;
+            source: @image-url("../assets/icons/x.svg");
+            horizontal-alignment: center; vertical-alignment: center;
+            opacity: overlay-ta.mouse-x >= 87px ? 1.0 : 0.6;
+        }
+    }
+
+    // grip-ta: letzte deklariert = höchste Z-Order im linken 24px-Bereich.
+    // Übernimmt ALLE Drag-Events (ta ist dort nicht zuständig).
+    grip-ta := TouchArea {
+        x: 0; y: 0; width: 24px; height: root.height;
+
+        property <bool>   drag-mode: false;
+        property <length> press-x:   0px;
+        property <length> press-y:   0px;
+
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {
+                self.press-x   = self.mouse-x;
+                self.press-y   = self.mouse-y;
+                self.drag-mode = false;
+            }
+            if (e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel)
+               && e.button == PointerEventButton.left && self.drag-mode {
+                self.drag-mode = false;
+                root.drag-dropped();
+            }
+        }
+
+        moved => {
+            if self.pressed && !self.drag-mode {
+                if abs(self.mouse-x - self.press-x) > 5px
+                   || abs(self.mouse-y - self.press-y) > 5px {
+                    self.drag-mode            = true;
+                    DragState.active          = true;
+                    DragState.task-id         = root.task.id;
+                    DragState.task-text       = root.task.text;
+                    DragState.task-done       = root.task.done;
+                    DragState.source-col      = root.col-index;
+                    DragState.source-list-idx = root.source-list-idx;
+                    DragState.source-task-idx = root.task-idx;
+                    DragState.target-task-idx = root.task-idx;
+                    DragState.target-col      = root.col-index;
+                    DragState.target-list-idx = root.source-list-idx;
+                    DragState.zone-boundary-y = 100000px;
+                    DragState.drop-line-y     = grip-ta.absolute-position.y;
+                    DragState.col-left-x      = grip-ta.absolute-position.x;
+                    DragState.col-width       = root.width;
+                }
+            }
+            if self.pressed && self.drag-mode {
+                if root.col-index >= 0 {
+                    DragState.target-col = max(0, min(6, root.col-index +
+                        floor(((grip-ta.absolute-position.x + self.mouse-x) - DragState.col-left-x)
+                              / DragState.col-width)));
+                } else {
+                    DragState.target-col = max(0, min(6,
+                        floor(((grip-ta.absolute-position.x + self.mouse-x) - root.days-col-left-x)
+                              / root.days-col-width)));
+                }
+                DragState.target-task-idx = 0;
+                DragState.cursor-x        = grip-ta.absolute-position.x + self.mouse-x;
+                DragState.cursor-y        = grip-ta.absolute-position.y + self.mouse-y;
+            }
+        }
+    }
+}
+
+// ─── DayColumn ────────────────────────────────────────────────────────────────
+
+component DayColumn inherits Rectangle {
+    in property <DayData>    day;
+    in property <int>        col-index;
+    in-out property <string> editing-id: "";
+    property <length>        add-scroll: 0px;
+    in property <length>      days-col-width:  160px;
+
+    callback add-task(int, string);
+    callback toggle-task(int, string);
+    callback delete-task(int, string);
+    callback rename-task(int, string, string);
+    callback task-drag-dropped();
+    callback set-task-due(int, string);
+    callback task-due-cleared(int, string);
+    callback start-editing(string);
+    callback stop-editing();
+    callback attach-image(int, string);
+    callback view-image(int, string);
+    callback image-file-dropped(int, string, string);
+    callback set-task-color(int, string, string);
+
+    // Force column width so TaskRow contents cannot enlarge it and de-sync
+    // Task/Day columns and the sticky header row.
+    width: root.days-col-width;
+
+    // clip:false → TaskRow-Hover-Overlay darf über Spaltenrand hinausgehen
+    clip: false;
+    // min-width:0 → Spalten bekommen gleiche Breite vom HorizontalLayout,
+    //               TaskRow-Inhalte erzwingen keine Mindestbreite
+    // (Bereits gesetzt oben.)
+
+    VerticalLayout {
+        padding-top: 4px; padding-bottom: 4px; alignment: start;
+
+        for task[task-idx] in day.tasks: TaskRow {
+            task:             task;
+            task-idx:         task-idx;
+            col-index:        root.col-index;
+            editing-id:       root.editing-id;
+            // Markiert den ersten Done-Task: dessen abs-y = Zone-Grenze
+            is-zone-boundary: task-idx == day.undone-count;
+            toggled        => { root.toggle-task(root.col-index, task.id); }
+            deleted        => { root.delete-task(root.col-index, task.id); }
+            drag-dropped   => { root.task-drag-dropped(); }
+            set-due        => { root.set-task-due(root.col-index, task.id); }
+            due-cleared    => { root.task-due-cleared(root.col-index, task.id); }
+            renamed(t)         => { root.rename-task(root.col-index, task.id, t); }
+            start-editing      => { root.start-editing(task.id); }
+            stop-editing       => { root.stop-editing(); }
+            attach-image       => { root.attach-image(root.col-index, task.id); }
+            view-image         => { root.view-image(root.col-index, task.id); }
+            image-file-dropped(p) => { root.image-file-dropped(root.col-index, task.id, p); }
+            set-color(hex)     => { root.set-task-color(root.col-index, task.id, hex); }
+        }
+        // "add task" row (hidden for past days)
+        // Kein width:parent.width – in VerticalLayout automatisch gestreckt.
+        // width:parent.width würde über DayColumn.layoutinfo-h → days-hl.layout-cache
+        // einen horizontalen Binding-Loop erzeugen.
+        if !day.is-past: Rectangle {
+            height: 34px;
+                    add-hover := TouchArea { }
+                    background: add-inp.has-focus ? Theme.hover-bg
+                               : add-hover.has-hover ? Theme.hover-bg : transparent;
+                    HorizontalLayout {
+                        height: parent.height;
+                        padding-left: 10px; padding-right: 6px;
+                        padding-top: 4px; padding-bottom: 4px;
+                        spacing: 4px;
+                        Text { text: "+"; color: Theme.ink-ghost; font-size: 14px;
+                               vertical-alignment: center; width: 12px; }
+                        Rectangle {
+                            horizontal-stretch: 1; height: 26px; clip: true;
+                            add-inp := TextInput {
+                                x: 4px - root.add-scroll;
+                                y: 0;
+                                width: max(parent.width - 8px, self.preferred-width);
+                                height: parent.height;
+                                font-size: 12px; color: Theme.ink;
+                                vertical-alignment: center; single-line: true;
+                                cursor-position-changed(p) => {
+                                    // Sichtbarer Bereich: [add-scroll .. add-scroll + (parent.width-8px)]
+                                    // Cursor zu weit rechts:
+                                    if p.x > root.add-scroll + parent.width - 8px {
+                                        root.add-scroll = p.x - parent.width + 8px;
+                                    }
+                                    // Cursor zu weit links:
+                                    if p.x < root.add-scroll {
+                                        root.add-scroll = max(0px, p.x);
+                                    }
+                                }
+                                accepted => {
+                                    if self.text != "" {
+                                        root.add-task(root.col-index, self.text);
+                                        self.text = "";
+                                        root.add-scroll = 0px;
+                                    }
+                                }
+                                key-pressed(e) => {
+                                    if e.text == Key.Escape {
+                                        self.text = "";
+                                        root.add-scroll = 0px;
+                                        self.clear-focus();
+                                        accept
+                                    } else { reject }
+                                }
+                                changed has-focus => {
+                                    if !self.has-focus {
+                                        if self.text != "" {
+                                            root.add-task(root.col-index, self.text);
+                                            self.text = "";
+                                        }
+                                        root.add-scroll = 0px;
+                                    }
+                                }
+                            }
+                            if add-inp.text == "" && !add-inp.has-focus: Text {
+                                x: 4px; width: parent.width - 8px;
+                                y: 9px;
+                                text: "Aufgabe hinzufügen"; font-size: 12px;
+                                color: Theme.ink-ghost;
+                            }
+                        }
+                    }
+                }
+    }
+
+    // Past-day Overlay (letzte Deklaration = höchste Z-Order)
+    if day.is-past && !DragState.active: Rectangle {
+        x: 0; y: 0; width: parent.width; height: parent.height;
+        background: #00000010;
+    }
+}
+// ─── SomedayListCard ─────────────────────────────────────────────────────────
+
+component SomedayListCard inherits Rectangle {
+    in property <SomedayList> slist;
+    in property <int>         list-index;
+
+    in-out property <string>  editing-id: "";
+    in-out property <int>     editing-list-idx: -1;
+    property <string>         pending-list-title: ""; // Puffer für Titelbearbeitung
+    property <length>         title-scroll: 0px;      // Scroll-Offset für Titelbearbeitung
+    property <length>         sd-scroll: 0px;         // Scroll-Offset für sd-Aufgabe-hinzufügen
+    in property <length>      days-list-top-y: 0px;
+    in property <length>      days-col-left-x: 0px;
+    in property <length>      days-col-width:  160px;
+
+    callback add-someday-task(int, string);
+    callback toggle-someday-task(int, string);
+    callback delete-someday-task(int, string);
+    callback rename-someday-task(int, string, string);
+    callback someday-task-drag-dropped();
+    callback set-someday-task-due(int, string);
+    callback someday-due-cleared(int, string);   // list-idx, id
+    callback rename-list(int, string);
+    callback delete-list(int);
+    callback start-editing(string);
+    callback stop-editing();
+    callback attach-someday-image(int, string);
+    callback view-someday-image(int, string);
+    callback someday-image-file-dropped(int, string, string);
+    callback set-someday-task-color(int, string, string);   // list-idx, id, hex
+    callback list-drag-dropped();
+
+    width: 232px; min-height: 120px;
+    border-radius: 8px; border-width: 1px; border-color: Theme.border;
+    background: Theme.surface;
+    animate background { duration: 100ms; } animate border-color { duration: 100ms; }
+    clip: false;  // TaskRow-Hover-Overlay; txt-col clippt Text intern
+
+    opacity: ListDragState.active && ListDragState.source-idx == root.list-index ? 0.28 : 1.0;
+    animate opacity { duration: 130ms; }
+
+    // Positions-Referenz für absolute-position (enabled:false = kein Event-Konsum)
+    list-pos-ta := TouchArea { x: 0; y: 0; width: parent.width; height: parent.height; enabled: false; }
+
+    // Reaktiv auf cursor-x: jede Karte setzt target-idx wenn Cursor sie passiert hat.
+    // Letzte Karte mit abs-x <= cursor-x gewinnt (links→rechts Dokumentreihenfolge).
+    property <length> _lcx: ListDragState.cursor-x;
+    changed _lcx => {
+        if ListDragState.active {
+            if ListDragState.cursor-x >= list-pos-ta.absolute-position.x {
+                ListDragState.target-idx = root.list-index + 1;
+                ListDragState.drop-x = list-pos-ta.absolute-position.x + root.width + 6px;
+            }
+            if root.list-index == 0
+               && ListDragState.cursor-x < list-pos-ta.absolute-position.x + root.width / 2 {
+                ListDragState.target-idx = 0;
+                ListDragState.drop-x = list-pos-ta.absolute-position.x - 6px;
+            }
+        }
+    }
+
+    // Someday Drop-Linie:
+    // - Gleiche Liste (source-list-idx == list-index): drop-line-y von _cy (snapped auf Task-Grenzen)
+    // - Andere Liste / Tag→Someday: cursor-y (kein Snap nötig)
+    // Cap: nie unterhalb der Task-Liste, d.h. max = card.height - 34px ("Aufgabe hinzufügen"-Zeile)
+    if DragState.active
+       && DragState.cursor-x >= root.absolute-position.x
+       && DragState.cursor-x < root.absolute-position.x + root.width
+       && DragState.cursor-y >= root.absolute-position.y
+       && DragState.cursor-y < root.absolute-position.y + root.height: Rectangle {
+        property <length> line-abs-y:
+            DragState.source-list-idx == root.list-index
+                ? DragState.drop-line-y                     // gleiche Liste: snapped
+                : DragState.cursor-y;                       // cross-context: cursor
+        property <length> rel-y: line-abs-y - root.absolute-position.y;
+        x: 8px;
+        // max(44px): nie im Header | min(root.height-34px): nie in "Aufgabe hinzufügen"-Zeile
+        y: max(44px, min(root.height - 34px, rel-y)) - 1px;
+        width: root.width - 16px; height: 2px;
+        background: Theme.drop-line;
+    }
+
+    VerticalLayout {
+        // ── List header: title (click to rename) + × delete ─────────────────
+        hdr-rect := Rectangle {
+            height: 40px; clip: true;
+            background: Theme.hdr-bg;
+            animate background { duration: 100ms; }
+
+            // Absolut positioniert: del-btn fix rechts, title-Rectangle explizit gebunden
+            // → kein Layout-Overflow möglich, × bleibt immer sichtbar
+            del-btn := TouchArea {
+                x: parent.width - 28px - 4px;
+                y: (parent.height - 28px) / 2;
+                width: 28px; height: 28px;
+                Rectangle {
+                    border-radius: 4px;
+                    background: del-btn.has-hover ? #ff444433 : transparent;
+                    animate background { duration: 60ms; }
+                    Image { source: @image-url("../assets/icons/x.svg"); width: 16px; height: 16px;
+                           horizontal-alignment: center; vertical-alignment: center; }
+                }
+                clicked => { root.delete-list(root.list-index); }
+            }
+            // Grip: 6 Punkte (2×3), identisch zu TaskRow
+            Rectangle {
+                x: 4px; y: 0; width: 24px; height: parent.height;
+                property <color> dot-c: list-grip-ta.has-hover ? #ffffffb0 : #ffffff40;
+                Rectangle { width:3px; height:3px; border-radius:1.5px; background: parent.dot-c;
+                            x: 7.75px; y: (parent.height - 14px) / 2; }
+                Rectangle { width:3px; height:3px; border-radius:1.5px; background: parent.dot-c;
+                            x: 13.25px; y: (parent.height - 14px) / 2; }
+                Rectangle { width:3px; height:3px; border-radius:1.5px; background: parent.dot-c;
+                            x: 7.75px; y: (parent.height - 14px) / 2 + 5.5px; }
+                Rectangle { width:3px; height:3px; border-radius:1.5px; background: parent.dot-c;
+                            x: 13.25px; y: (parent.height - 14px) / 2 + 5.5px; }
+                Rectangle { width:3px; height:3px; border-radius:1.5px; background: parent.dot-c;
+                            x: 7.75px; y: (parent.height - 14px) / 2 + 11px; }
+                Rectangle { width:3px; height:3px; border-radius:1.5px; background: parent.dot-c;
+                            x: 13.25px; y: (parent.height - 14px) / 2 + 11px; }
+            }
+
+            // Titelbereich: x=32px (nach Grip)
+            Rectangle {
+                x: 32px;
+                y: (parent.height - self.height) / 2;
+                width: del-btn.x - 32px - 4px;
+                height: 28px;
+                clip: true;
+
+                // Text-Anzeige (visible:, NIE if!)
+                title-text := Text {
+                    visible: root.editing-list-idx != root.list-index;
+                    x: 0; y: 0; width: parent.width; height: parent.height;
+                    text: slist.title;
+                    font-size: 11px; font-weight: 700; letter-spacing: 1.5px;
+                    color: Theme.today-ink; vertical-alignment: center; overflow: elide;
+                }
+
+                // TextInput (visible:, NIE if!) — scrollt automatisch durch clip
+                list-title-input := TextInput {
+                    visible: root.editing-list-idx == root.list-index;
+                    x: -root.title-scroll;
+                    y: 0;
+                    width: max(parent.width, self.preferred-width);
+                    height: parent.height;
+                    text: root.pending-list-title;
+                    font-size: 11px; font-weight: 700; letter-spacing: 1.5px;
+                    color: Theme.today-ink; vertical-alignment: center; single-line: true;
+                    cursor-position-changed(p) => {
+                        if p.x > root.title-scroll + parent.width {
+                            root.title-scroll = p.x - parent.width + 2px;
+                        }
+                        if p.x < root.title-scroll {
+                            root.title-scroll = max(0px, p.x - 2px);
+                        }
+                    }
+                    changed visible => {
+                        if self.visible {
+                            self.focus();
+                        } else {
+                            root.title-scroll = 0px;
+                        }
+                    }
+                    edited => { root.pending-list-title = self.text; }
+                    key-pressed(e) => {
+                        if e.text == Key.Return || e.text == Key.Escape {
+                            root.editing-list-idx = -1;
+                            if e.text == Key.Return && root.pending-list-title != "" {
+                                root.rename-list(root.list-index, root.pending-list-title);
+                            }
+                            accept
+                        } else { reject }
+                    }
+                }
+
+                // TouchArea (enabled:, NIE if!) — wird nie zerstört
+                title-ta := TouchArea {
+                    x: 0; y: 0; width: parent.width; height: parent.height;
+                    enabled: root.editing-list-idx != root.list-index;
+                    clicked => {
+                        root.pending-list-title = slist.title;
+                        root.editing-list-idx = root.list-index;
+                    }
+                }
+            }
+
+            // Grip-TouchArea: höchste Z-Order in hdr-rect, konsumiert Grip-Events
+            list-grip-ta := TouchArea {
+                x: 0; y: 0; width: 28px; height: parent.height;
+                property <bool>   drag-mode: false;
+                property <length> press-x:   0px;
+                property <length> press-y:   0px;
+                pointer-event(e) => {
+                    if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {
+                        self.press-x = self.mouse-x;
+                        self.press-y = self.mouse-y;
+                        self.drag-mode = false;
+                    }
+                    if (e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel)
+                       && e.button == PointerEventButton.left && self.drag-mode {
+                        self.drag-mode       = false;
+                        ListDragState.active = false;
+                        root.list-drag-dropped();
+                    }
+                }
+                moved => {
+                    if self.pressed && !self.drag-mode {
+                        if abs(self.mouse-x - self.press-x) > 5px
+                           || abs(self.mouse-y - self.press-y) > 5px {
+                            self.drag-mode           = true;
+                            ListDragState.active     = true;
+                            ListDragState.source-idx = root.list-index;
+                            ListDragState.target-idx = root.list-index;
+                            ListDragState.drop-x     = list-pos-ta.absolute-position.x + root.width + 6px;
+                        }
+                    }
+                    if self.pressed && self.drag-mode {
+                        ListDragState.cursor-x = list-grip-ta.absolute-position.x + self.mouse-x;
+                        ListDragState.cursor-y = list-grip-ta.absolute-position.y + self.mouse-y;
+                    }
+                }
+            }
+        }
+        sd-scv := ScrollView {
+            vertical-scrollbar-policy: as-needed; horizontal-scrollbar-policy: always-off;
+            min-height: 80px; max-height: 300px;
+            // viewport-height = max(Inhalt, sichtbarer Bereich). self = sd-scv.
+            viewport-height: max(sd-task-vl.preferred-height, self.height);
+            Rectangle {
+                width: root.width;
+            sd-task-vl := VerticalLayout {
+                padding-top: 4px; padding-bottom: 4px; alignment: start;
+                for task[task-idx] in slist.tasks: TaskRow {
+                    task: task; task-idx: task-idx;
+                    col-index: -1; source-list-idx: root.list-index;
+                    editing-id:      root.editing-id;
+                    days-list-top-y: root.days-list-top-y;
+                    days-col-left-x: root.days-col-left-x;
+                    days-col-width:  root.days-col-width;
+                    toggled        => { root.toggle-someday-task(root.list-index, task.id); }
+                    deleted        => { root.delete-someday-task(root.list-index, task.id); }
+                    drag-dropped   => { root.someday-task-drag-dropped(); }
+                    set-due        => { root.set-someday-task-due(root.list-index, task.id); }
+                    due-cleared    => { root.someday-due-cleared(root.list-index, task.id); }
+                    renamed(t)         => { root.rename-someday-task(root.list-index, task.id, t); }
+                    start-editing      => { root.start-editing(task.id); }
+                    stop-editing       => { root.stop-editing(); }
+                    attach-image       => { root.attach-someday-image(root.list-index, task.id); }
+                    view-image         => { root.view-someday-image(root.list-index, task.id); }
+                    image-file-dropped(p) => { root.someday-image-file-dropped(root.list-index, task.id, p); }
+                    set-color(hex)     => { root.set-someday-task-color(root.list-index, task.id, hex); }
+                }
+                sd-row := Rectangle {
+                    width: parent.width; height: 34px;
+                    sd-hover := TouchArea { }
+                    background: sd-inp.has-focus ? Theme.hover-bg : sd-hover.has-hover ? Theme.hover-bg : transparent;
+                    HorizontalLayout {
+                        height: parent.height;
+                        padding-left: 10px; padding-right: 6px;
+                        padding-top: 4px; padding-bottom: 4px;
+                        spacing: 4px;
+                        Text { text: "+"; color: Theme.ink-ghost; font-size: 14px;
+                               vertical-alignment: center; width: 12px; }
+                        Rectangle {
+                            horizontal-stretch: 1; height: 26px; clip: true;
+                            sd-inp := TextInput {
+                                x: 4px - root.sd-scroll;
+                                y: 0;
+                                width: max(parent.width - 8px, self.preferred-width);
+                                height: parent.height;
+                                font-size: 12px; color: Theme.ink;
+                                vertical-alignment: center; single-line: true;
+                                cursor-position-changed(p) => {
+                                    if p.x > root.sd-scroll + parent.width - 8px {
+                                        root.sd-scroll = p.x - parent.width + 8px;
+                                    }
+                                    if p.x < root.sd-scroll {
+                                        root.sd-scroll = max(0px, p.x);
+                                    }
+                                }
+                                accepted => {
+                                    if self.text != "" {
+                                        root.add-someday-task(root.list-index, self.text);
+                                        self.text = "";
+                                        root.sd-scroll = 0px;
+                                    }
+                                }
+                                key-pressed(e) => {
+                                    if e.text == Key.Escape {
+                                        self.text = "";
+                                        root.sd-scroll = 0px;
+                                        self.clear-focus();
+                                        accept
+                                    } else { reject }
+                                }
+                                changed has-focus => {
+                                    if !self.has-focus {
+                                        if self.text != "" {
+                                            root.add-someday-task(root.list-index, self.text);
+                                            self.text = "";
+                                        }
+                                        root.sd-scroll = 0px;
+                                    }
+                                }
+                            }
+                            if sd-inp.text == "" && !sd-inp.has-focus: Text {
+                                x: 4px; width: parent.width - 8px;
+                                y: 9px;
+                                text: "Aufgabe hinzufügen"; font-size: 12px;
+                                color: Theme.ink-ghost;
+                            }
+                        }
+                    }
+                }
+            }
+            } // end wrapper Rectangle
+        }
+    }
+}
+
+// ─── Deutscher Kalender-Popup ─────────────────────────────────────────────────
+// Ersetzt DatePickerPopup mit deutschen Monats- und Wochentagnamen
+
+component GermanDatePicker inherits PopupWindow {
+    // Callbacks
+    callback accepted(int, int, int);       // day, month, year (kein TimePicker)
+    callback accepted-with-time(int, int, int);  // day, month, year (→ TimePicker folgt)
+    callback canceled();
+
+    in-out property <int> current-day:   1;
+    in-out property <int> current-month: 1;
+    in-out property <int> current-year:  2025;
+
+    // Interner Navigationszustand (Monat der Kalenderanzeige)
+    property <int> view-month: current-month;
+    property <int> view-year:  current-year;
+
+    // Hilfsfunktionen
+    pure function month-name(m: int) -> string {
+        m == 1  ? "Januar"    :
+        m == 2  ? "Februar"   :
+        m == 3  ? "März"      :
+        m == 4  ? "April"     :
+        m == 5  ? "Mai"       :
+        m == 6  ? "Juni"      :
+        m == 7  ? "Juli"      :
+        m == 8  ? "August"    :
+        m == 9  ? "September" :
+        m == 10 ? "Oktober"   :
+        m == 11 ? "November"  : "Dezember"
+    }
+    pure function days-in-month(m: int, y: int) -> int {
+        m == 2  ? (Math.mod(y, 4) == 0 && (Math.mod(y, 100) != 0 || Math.mod(y, 400) == 0) ? 29 : 28) :
+        m == 4 || m == 6 || m == 9 || m == 11 ? 30 : 31
+    }
+    // Wochentag des 1. des Monats: 0=Mo … 6=So (Zeller's congruence, Math.mod statt %)
+    pure function first-weekday(m: int, y: int) -> int {
+        // m2 = m+12 wenn Jan/Feb, sonst m; y2 = y-1 wenn Jan/Feb, sonst y
+        Math.mod(
+            Math.mod(
+                1
+                + (13 * ((m <= 2 ? m + 12 : m) + 1)) / 5
+                + Math.mod((m <= 2 ? y - 1 : y), 100)
+                + Math.mod((m <= 2 ? y - 1 : y), 100) / 4
+                + (m <= 2 ? y - 1 : y) / 400
+                - 2 * ((m <= 2 ? y - 1 : y) / 100),
+            7) + 5,
+        7)
+    }
+
+    width: 320px; height: 370px;
+    close-policy: no-auto-close;
+
+    Rectangle {
+        border-radius: 12px; border-width: 1px; border-color: Theme.border;
+        background: Theme.surface;
+        drop-shadow-blur: 24px; drop-shadow-offset-y: 8px; drop-shadow-color: #00000022;
+
+        VerticalLayout {
+            padding: 16px; spacing: 8px;
+
+            // ── Kopfzeile: Monat/Jahr + Navigation ──────────────────────
+            HorizontalLayout {
+                alignment: space-between;
+                prev-m := TouchArea {
+                    width: 32px; height: 32px;
+                    Rectangle {
+                        border-radius: 6px;
+                        background: prev-m.has-hover ? Theme.hover-bg : transparent;
+                        Image { source: @image-url("../assets/icons/prev.svg"); width: 20px; height: 20px;
+                               horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                    clicked => {
+                        if view-month == 1 { view-month = 12; view-year -= 1; }
+                        else { view-month -= 1; }
+                    }
+                }
+                Text {
+                    text: month-name(view-month) + " " + view-year;
+                    font-size: 15px; font-weight: 700; color: Theme.ink;
+                    horizontal-alignment: center; vertical-alignment: center;
+                }
+                next-m := TouchArea {
+                    width: 32px; height: 32px;
+                    Rectangle {
+                        border-radius: 6px;
+                        background: next-m.has-hover ? Theme.hover-bg : transparent;
+                        Image { source: @image-url("../assets/icons/next.svg"); width: 20px; height: 20px;
+                               horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                    clicked => {
+                        if view-month == 12 { view-month = 1; view-year += 1; }
+                        else { view-month += 1; }
+                    }
+                }
+            }
+
+            // ── Wochentag-Köpfe ─────────────────────────────────────────
+            HorizontalLayout {
+                for dow in ["Mo","Di","Mi","Do","Fr","Sa","So"]: Text {
+                    text: dow; font-size: 11px; font-weight: 700;
+                    color: Theme.ink-ghost; horizontal-alignment: center;
+                    width: (320px - 32px) / 7;
+                }
+            }
+
+            // ── Kalender-Gitter (6 Wochen × 7 Tage) ─────────────────────
+            property <int> first-wd: first-weekday(view-month, view-year);
+            property <int> dim: days-in-month(view-month, view-year);
+
+            VerticalLayout {
+                spacing: 2px;
+                for week in [0,1,2,3,4,5]: HorizontalLayout {
+                    for col in [0,1,2,3,4,5,6]: cal-cell := TouchArea {
+                        width: (320px - 32px) / 7; height: 36px;
+                        property <int> cell-nr: week * 7 + col;
+                        property <int> day-nr:  cell-nr - first-wd + 1;
+                        property <bool> valid:   day-nr >= 1 && day-nr <= dim;
+                        property <bool> is-sel:  valid && day-nr == current-day
+                                                 && view-month == current-month
+                                                 && view-year  == current-year;
+                        Rectangle {
+                            border-radius: 18px;
+                            background: is-sel ? Theme.accent
+                                       : cal-cell.has-hover && valid ? Theme.hover-bg
+                                       : transparent;
+                            Text {
+                                text: valid ? day-nr : "";
+                                font-size: 13px;
+                                font-weight: is-sel ? 700 : 400;
+                                color: is-sel ? Theme.today-ink
+                                             : valid ? Theme.ink : transparent;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                        }
+                        clicked => {
+                            if valid {
+                                current-day   = day-nr;
+                                current-month = view-month;
+                                current-year  = view-year;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ── Schaltflächen ─────────────────────────────────────────────
+            HorizontalLayout {
+                alignment: end; spacing: 8px;
+                // Uhr-Button: Datum übernehmen + TimePicker öffnen
+                time-btn := TouchArea {
+                    width: 36px; height: 34px;
+                    Rectangle {
+                        border-radius: 6px; border-width: 1px; border-color: Theme.border;
+                        background: time-btn.has-hover ? Theme.hover-bg : transparent;
+                        Image { source: @image-url("../assets/icons/clock.svg"); width: 16px; height: 16px;
+                               horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                    clicked => {
+                        root.accepted-with-time(current-day, current-month, current-year);
+                        root.close();
+                    }
+                }
+                abbruch := TouchArea {
+                    width: 80px; height: 34px;
+                    Rectangle {
+                        border-radius: 6px; border-width: 1px; border-color: Theme.border;
+                        background: abbruch.has-hover ? Theme.hover-bg : transparent;
+                        Text { text: "Abbrechen"; font-size: 12px; color: Theme.ink;
+                               horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                    clicked => { root.canceled(); root.close(); }
+                }
+                ok-btn := TouchArea {
+                    width: 60px; height: 34px;
+                    Rectangle {
+                        border-radius: 6px;
+                        background: ok-btn.has-hover ? Theme.accent.darker(10%) : Theme.accent;
+                        Text { text: "OK"; font-size: 12px; font-weight: 700;
+                               color: Theme.today-ink;
+                               horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                    clicked => {
+                        root.accepted(current-day, current-month, current-year);
+                        root.close();
+                    }
+                }
+            }
+        }
+    }
+}
+
+
+// ─── AppWindow ────────────────────────────────────────────────────────────────
+
+export component AppWindow inherits Window {
+    title: "TuDu";
+    icon: @image-url("../assets/icon.svg");
+    preferred-width: 1120px; preferred-height: 780px;
+    min-width: 700px; min-height: 500px;
+    background: Theme.bg;
+
+    // Klick außerhalb: Editiermodus sofort beenden.
+    // changed editing in TaskRow speichert den Text via edit-text-Puffer.
+    bg-ta := TouchArea {
+        enabled: root.editing-task-id != "" || root.editing-list-idx >= 0;
+        clicked => {
+            root.editing-task-id = "";
+            root.editing-list-idx = -1;
+        }
+        // Datei-DnD: nicht unterstützt in Slint 1.15, nur über 📎-Dateidialog
+    }
+
+    // Tastatur-Shortcuts (Strg+Z = Undo, Strg+Y / Strg+Shift+Z = Redo)
+    key-scope := FocusScope {
+        x: 0; y: 0; width: root.width; height: root.height;
+        key-pressed(e) => {
+            if e.modifiers.control && e.text == "z" && !e.modifiers.shift {
+                root.undo(); accept
+            } else if e.modifiers.control && (e.text == "y"
+                    || (e.text == "z" && e.modifiers.shift)) {
+                root.redo(); accept
+            } else { reject }
+        }
+    }
+
+    // ── Einstellungen ────────────────────────────────────────────────────────
+    in-out property <bool>   settings-open: false;
+    in-out property <string> accent-hex:    "#1c1c1c";  // aktuell gewählte Akzentfarbe
+    callback set-accent-color(string);  // hex → Rust speichert + setzt Theme
+    callback reset-settings();          // alles auf Standard zurücksetzen
+
+    in-out property <[DayData]>     days;
+    in-out property <[SomedayList]> someday-lists;
+    in-out property <string>        week-label:      "—";
+    in-out property <string>        kw-label:        "";
+    in-out property <bool>          hide-done:       false;
+    in-out property <string>        data-path-label: "";
+    in-out property <string>        extern-changed-info: ""; // gesetzt wenn data.json extern geändert wurde
+    in-out property <string>        editing-task-id: "";  // ID des Tasks im Editiermodus
+    in-out property <int>           editing-list-idx: -1; // Index der Liste im Titel-Editiermodus
+    in-out property <bool>          can-undo: false;
+    in-out property <bool>          can-redo: false;
+
+    // Image-Popup (von Rust gesetzt bevor Popup geöffnet wird)
+    in-out property <image>  popup-image;
+    in-out property <int>    popup-image-col:      -1;
+    in-out property <int>    popup-image-list-idx: -1;
+    in-out property <string> popup-image-task-id:  "";
+
+    // Hovered-Task für Datei-DnD (von TaskRow über start-editing analog gesetzt)
+    in-out property <int>    hovered-task-col:      -1;
+    in-out property <int>    hovered-task-list-idx: -1;
+    in-out property <string> hovered-task-id:       "";
+
+    // Picker pre-population (set from Rust before opening)
+    in-out property <int> picker-day:    1;
+    in-out property <int> picker-month:  1;
+    in-out property <int> picker-year:   2025;
+    in-out property <int> picker-hour:   9;
+    in-out property <int> picker-minute: 0;
+
+    out property <float> drag-target-col-f:
+        max(0.0, min(6.0, DragState.cursor-x / self.width * 7.0));
+    out property <float> drag-target-someday-idx-f:
+        DragState.cursor-y >= someday-rect.absolute-position.y
+        ? max(0.0, (DragState.cursor-x - 16px) / 232px) : -1.0;
+
+    // ── Standard callbacks ────────────────────────────────────────────────
+    callback add-task(int, string);
+    callback toggle-task(int, string);
+    callback delete-task(int, string);
+    callback navigate-week(int);
+    callback navigate-today();
+    callback add-someday-task(int, string);
+    callback toggle-someday-task(int, string);
+    callback delete-someday-task(int, string);
+    callback add-someday-list(string);
+    callback rename-someday-list(int, string);
+    callback delete-someday-list(int);
+    callback reorder-someday-list(int, int);
+    callback task-drag-dropped();
+    callback someday-task-drag-dropped();
+    callback toggle-hide-done();
+    callback undo();
+    callback redo();
+    callback delete-all-done();
+    callback change-data-path();
+    callback quit-app();
+    callback set-task-due(int, int, string);     // col, list-idx, id
+    callback rename-task(int, int, string, string); // col, list-idx, id, text
+    callback attach-image(int, int, string);        // col, list-idx, id
+    callback show-image(int, int, string);          // col, list-idx, id → Rust lädt Bild
+    callback delete-image(int, int, string);        // col, list-idx, id
+    callback file-drop-on-task(int, int, string, string); // col, list-idx, id, filepath
+    callback set-task-color(int, int, string, string); // col, list-idx, id, hex
+
+    // ── Due-date picker callbacks (called by Slint → handled in Rust) ─────
+    // date+time both confirmed
+    callback due-complete(int, int, int, int, int);  // day, month, year, hour, minute
+    // date confirmed, time skipped
+    callback due-date-only(int, int, int);           // day, month, year
+    // user chose "Datum entfernen"
+    callback due-cleared();
+    // due-cleared-for: von TaskRow über DayColumn/SomedayListCard; speichert editing-Kontext
+    // und ruft dann due-cleared() auf (gleiche Rust-Logik wie bisher)
+    callback due-cleared-for(int, int, string);  // col, list-idx, id
+
+    // ── Public functions (called from Rust via invoke_*) ──────────────────
+    public function open-image-popup() {
+        image-popup.show();
+    }
+    public function open-date-picker() {
+        date-picker.show();
+    }
+    public function open-time-picker() {
+        time-picker.show();
+    }
+
+
+    // ── Header ────────────────────────────────────────────────────────────
+    VerticalLayout {
+        Rectangle {
+            height: 54px; background: Theme.hdr-bg;
+            HorizontalLayout {
+                padding-left: 20px; padding-right: 20px; spacing: 0px;
+                alignment: space-between;
+
+                // ── Links: TuDu + Undo + Redo ─────────────────────────────
+                // Gleiche Struktur wie HdrBtn: äußeres Rectangle (stretch=1) → TouchArea darin.
+                // Rectangle hat vertical-stretch:1 → füllt volle 54px.
+                // TouchArea füllt das Rectangle → kein Clipping.
+                HorizontalLayout {
+                    horizontal-stretch: 0; spacing: 4px; alignment: center;
+                    Text { text: "TuDu"; font-size: 19px; font-weight: 700; letter-spacing: 0.5px;
+                           color: Theme.today-ink; vertical-alignment: center; min-width: 60px; }
+                    HdrBtn { has-icon: true; enabled: root.can-undo; icon: @image-url("../assets/icons/undo-v2.svg"); tooltip: "Rückgängig"; clicked => { root.undo(); } }
+                    HdrBtn { has-icon: true; enabled: root.can-redo; icon: @image-url("../assets/icons/redo-v2.svg"); tooltip: "Wiederholen"; clicked => { root.redo(); } }
+                }
+
+                // ── Mitte: Wochennavigation ────────────────────────────────
+                HorizontalLayout {
+                    horizontal-stretch: 0; spacing: 6px; alignment: center;
+                    prev-btn := TouchArea {
+                        width: 30px; height: 54px;
+                        Rectangle { width: parent.width; height: parent.height;
+                            border-radius: 4px; background: prev-btn.has-hover ? Theme.btn-hover : transparent;
+                            animate background { duration: 80ms; }
+                            Image { source: @image-url("../assets/icons/prev-white.svg"); width: 22px; height: 22px;
+                                   horizontal-alignment: center; vertical-alignment: center; } }
+                        clicked => { root.navigate-week(-1); }
+                    }
+                    VerticalLayout {
+                        alignment: center; spacing: 2px;
+                        HorizontalLayout {
+                            spacing: 8px; alignment: center;
+                            Text { text: root.kw-label; color: Theme.today-ink; font-size: 12px;
+                                   letter-spacing: 0.5px; vertical-alignment: center; }
+                            Text { text: root.week-label; color: Theme.ink-ghost; font-size: 12px;
+                                   letter-spacing: 0.5px; vertical-alignment: center; min-width: 160px;
+                                   horizontal-alignment: center; }
+                        }
+                        today-ta := TouchArea {
+                            height: 18px;
+                            Rectangle {
+                                width: parent.width; height: parent.height;
+                                border-radius: 3px;
+                                background: today-ta.has-hover ? Theme.btn-hover : transparent;
+                                animate background { duration: 80ms; }
+                                Text { text: "Heute"; font-size: 10px; color: Theme.ink-ghost;
+                                       horizontal-alignment: center; vertical-alignment: center;
+                                       width: parent.width; height: parent.height; }
+                            }
+                            clicked => { root.navigate-today(); }
+                        }
+                    }
+                    next-btn := TouchArea {
+                        width: 30px; height: 54px;
+                        Rectangle { width: parent.width; height: parent.height;
+                            border-radius: 4px; background: next-btn.has-hover ? Theme.btn-hover : transparent;
+                            animate background { duration: 80ms; }
+                            Image { source: @image-url("../assets/icons/next-white.svg"); width: 22px; height: 22px;
+                                   horizontal-alignment: center; vertical-alignment: center; } }
+                        clicked => { root.navigate-week(1); }
+                    }
+                }
+
+                // ── Rechts: Undo + Redo + Aktions-Buttons ─────────────────
+                HorizontalLayout {
+                    horizontal-stretch: 0; spacing: 6px; alignment: center;
+                    HdrBtn { has-icon: true; icon: root.hide-done ? @image-url("../assets/icons/eye-off-white.svg") : @image-url("../assets/icons/eye-white.svg"); tooltip: root.hide-done ? "Erledigte einblenden" : "Erledigte ausblenden"; active: root.hide-done; clicked => { root.toggle-hide-done(); } }
+                    HdrBtn { has-icon: true; icon: @image-url("../assets/icons/trash-white.svg"); tooltip: "Erledigte löschen"; clicked => { root.delete-all-done(); } }
+                    HdrBtn { has-icon: true; icon: @image-url("../assets/icons/settings-white.svg"); tooltip: "Einstellungen"; clicked => { root.settings-open = true; } }
+                    HdrBtn { has-icon: true; icon: @image-url("../assets/icons/power-white.svg"); tooltip: "Beenden"; clicked => { root.editing-task-id = ""; root.editing-list-idx = -1; root.quit-app(); } }
+                }
+            }
+        }
+
+        // Banner: externe Änderung an data.json erkannt
+        if root.extern-changed-info != "": Rectangle {
+            height: 26px; background: #5c3a00;
+            HorizontalLayout {
+                padding-left: 20px; padding-right: 12px; spacing: 12px; alignment: center;
+                Text { text: root.extern-changed-info; font-size: 11px;
+                       color: #ffcc77; vertical-alignment: center; horizontal-stretch: 1; }
+                dismiss-ta := TouchArea {
+                    width: 60px;
+                    Rectangle {
+                        border-radius: 3px;
+                        background: dismiss-ta.has-hover ? #7a5010 : #6a4500;
+                        Text { text: "OK"; font-size: 11px; color: #ffcc77;
+                               horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                    clicked => { root.extern-changed-info = ""; }
+                }
+            }
+        }
+
+        // ── Week columns ─────────────────────────────────────────────────
+        days-rect := Rectangle {
+            vertical-stretch: 2; background: Theme.surface;
+            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+
+            // ── Einziger ScrollView; Header UND Tasks drin ────────────────
+            // Damit haben Header-Zellen und Task-Spalten IMMER die gleiche Breite:
+            // beide sind Kinder desselben Viewports → identische viewport-width,
+            // unabhängig davon ob der Scrollbalken gerade sichtbar ist oder nicht.
+            // Header klebt via  y: -days-scv.viewport-y  am sichtbaren oberen Rand
+            // (sticky positioning ohne separate Layout-Ebene).
+            days-scv := ScrollView {
+                x: 0; y: 0;
+                width:  parent.width;
+                height: parent.height;
+                vertical-scrollbar-policy: as-needed;
+                horizontal-scrollbar-policy: always-off;
+                // viewport-height treibt den Scrollbalken.
+                // col-hl.preferred-height hängt nur von Task-Daten ab → kein Loop.
+                // self.height = days-rect.height (stabil) → kein Loop.
+                viewport-height: max(54px + col-hl.preferred-height, self.height);
+
+                Rectangle {
+                    width:  parent.width;
+                    height: max(54px + col-hl.preferred-height, days-scv.height);
+
+                    // ── Task-Spalten (y=54px, unterhalb des Headers) ──────
+                    col-hl := HorizontalLayout {
+                        y: 54px;
+                        for day[col-idx] in root.days: DayColumn {
+                            day: day; col-index: col-idx; horizontal-stretch: 1;
+                            // Forcing the column width prevents the Task column from growing
+                            // due to wide content; the header cell uses the same shared width.
+                            days-col-width: days-rect.width / 7;
+                            editing-id:             root.editing-task-id;
+                            add-task(idx, text)     => { root.add-task(idx, text); }
+                            toggle-task(idx, id)    => { root.toggle-task(idx, id); }
+                            delete-task(idx, id)    => { root.delete-task(idx, id); }
+                            rename-task(idx, id, t) => { root.rename-task(idx, -1, id, t); }
+                            task-drag-dropped       => { root.task-drag-dropped(); }
+                            set-task-due(idx, id)   => { root.set-task-due(idx, -1, id); }
+                            task-due-cleared(idx, id) => { root.due-cleared-for(idx, -1, id); }
+                            start-editing(id)       => {
+                                root.editing-task-id = id;
+                                root.hovered-task-col = col-idx;
+                                root.hovered-task-list-idx = -1;
+                                root.hovered-task-id = id;
+                            }
+                            stop-editing            => {
+                                root.editing-task-id = "";
+                                root.hovered-task-id = "";
+                            }
+                            attach-image(idx, id)   => { root.attach-image(idx, -1, id); }
+                            view-image(idx, id)     => { root.show-image(idx, -1, id); }
+                            image-file-dropped(idx, id, p) => { root.file-drop-on-task(idx, -1, id, p); }
+                            set-task-color(idx, id, hex) => { root.set-task-color(idx, -1, id, hex); }
+                        }
+                    }
+
+                    // ── Sticky Header (y = -viewport-y) ──────────────────
+                    // Deklariert NACH col-hl → höhere Z-Order → überdeckt scrollende Tasks.
+                    // Breite = Rectangle.width = Viewport-Breite (Scrollbalken bereits abgezogen).
+                    // So sind Header-Zellen und Task-Spalten garantiert gleich breit.
+                    header-hl := HorizontalLayout {
+                        y: -days-scv.viewport-y;
+                        height: 54px;
+                        for day[col-idx] in root.days: Rectangle {
+                            width: days-rect.width / 7;
+                            background: day.is-today ? Theme.today-bg : Theme.surface;
+                            animate background { duration: 200ms; }
+                            VerticalLayout {
+                                alignment: center; padding-top: 8px; padding-bottom: 8px;
+                                Text {
+                                    text: day.day-name;
+                                    font-size: 9px; font-weight: 700; letter-spacing: 2px;
+                                    color: day.is-today ? Theme.today-ink : Theme.ink-ghost;
+                                    horizontal-alignment: center;
+                                }
+                                Text {
+                                    text: day.date-label;
+                                    font-size: 16px; font-weight: day.is-today ? 700 : 400;
+                                    color: day.is-today ? Theme.today-ink : Theme.ink;
+                                    horizontal-alignment: center;
+                                }
+                            }
+                            Rectangle { y: parent.height - 1px; height: 1px; background: Theme.border; }
+                            Rectangle { x: parent.width - 1px; width: 1px; background: Theme.border; }
+                        }
+                    }
+                }
+            }
+        }
+        // ── Someday section ──────────────────────────────────────────────
+        someday-rect := Rectangle {
+            vertical-stretch: 1; background: Theme.bg;
+            VerticalLayout {
+                padding: 16px; spacing: 12px;
+                HorizontalLayout {
+                    alignment: space-between;
+                    Text { text: "IRGENDWANN"; font-size: 10px; font-weight: 700; letter-spacing: 3px;
+                           color: Theme.ink-muted; vertical-alignment: center; }
+                    add-list-btn := TouchArea {
+                        height: 26px; width: 110px;
+                        Rectangle {
+                            border-radius: 4px; border-width: 1px;
+                            border-color: add-list-btn.has-hover ? Theme.ink : Theme.border;
+                            background: transparent; animate border-color { duration: 80ms; }
+                            Text { text: "+ Neue Liste"; font-size: 11px; color: Theme.ink-muted;
+                                   horizontal-alignment: center; vertical-alignment: center; }
+                        }
+                        clicked => { root.add-someday-list("Neue Liste"); }
+                    }
+                }
+                ScrollView {
+                    vertical-scrollbar-policy: always-off; horizontal-scrollbar-policy: as-needed;
+                    HorizontalLayout {
+                        spacing: 12px; alignment: start;
+                        for sl[sl-idx] in root.someday-lists: SomedayListCard {
+                            slist: sl; list-index: sl-idx;
+                            editing-id:                     root.editing-task-id;
+                            editing-list-idx:               root.editing-list-idx;
+                            days-list-top-y:                days-rect.absolute-position.y + 54px + 4px;
+                            days-col-left-x:                days-rect.absolute-position.x;
+                            days-col-width:                 days-rect.width / 7;
+                            add-someday-task(idx, text)     => { root.add-someday-task(idx, text); }
+                            toggle-someday-task(idx, id)    => { root.toggle-someday-task(idx, id); }
+                            delete-someday-task(idx, id)    => { root.delete-someday-task(idx, id); }
+                            rename-someday-task(idx, id, t) => { root.rename-task(-1, idx, id, t); }
+                            someday-task-drag-dropped       => { root.someday-task-drag-dropped(); }
+                            set-someday-task-due(idx, id)   => { root.set-task-due(-1, idx, id); }
+                            someday-due-cleared(idx, id)    => { root.due-cleared-for(-1, idx, id); }
+                            rename-list(idx, t)             => { root.rename-someday-list(idx, t); }
+                            delete-list(idx)                => { root.delete-someday-list(idx); }
+                            list-drag-dropped               => { root.reorder-someday-list(ListDragState.source-idx, ListDragState.target-idx); }
+                            start-editing(id)               => {
+                                root.editing-task-id = id;
+                                root.hovered-task-col = -1;
+                                root.hovered-task-list-idx = sl-idx;
+                                root.hovered-task-id = id;
+                            }
+                            stop-editing                    => {
+                                root.editing-task-id = "";
+                                root.hovered-task-id = "";
+                            }
+                            attach-someday-image(idx, id)   => { root.attach-image(-1, idx, id); }
+                            view-someday-image(idx, id)     => { root.show-image(-1, idx, id); }
+                            someday-image-file-dropped(idx, id, p) => { root.file-drop-on-task(-1, idx, id, p); }
+                            set-someday-task-color(idx, id, hex) => { root.set-task-color(-1, idx, id, hex); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Listen-Drop-Linie (vertikale Linie zwischen Karten) ─────────────────
+    if ListDragState.active: Rectangle {
+        x: ListDragState.drop-x - 1px;
+        y: someday-rect.absolute-position.y + 8px;
+        width: 2px;
+        height: someday-rect.height - 16px;
+        background: Theme.drop-line;
+        border-radius: 1px;
+    }
+
+    // ── Task-Drop-Overlay (AppWindow-Ebene) ──────────────────────────────────
+    // Bedeckt den Task-Bereich (unterhalb der 54px-Header).
+    // Liegt auf AppWindow-Ebene → kein Binding-Loop mit days-rect.height.
+    if DragState.active: drop-overlay-rect := TouchArea {
+        x: days-rect.absolute-position.x;
+        y: days-rect.absolute-position.y + 54px;
+        width: days-rect.width;
+        height: days-rect.height - 54px;
+        moved => {
+            DragState.target-col      = max(0, min(6, floor(self.mouse-x / (self.width / 7))));
+            DragState.target-task-idx = 0;
+            DragState.drop-line-y     = self.absolute-position.y + self.mouse-y;
+            DragState.cursor-x        = self.absolute-position.x + self.mouse-x;
+            DragState.cursor-y        = self.absolute-position.y + self.mouse-y;
+        }
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.up && DragState.active {
+                DragState.active = false;
+                root.task-drag-dropped();
+            }
+            if e.kind == PointerEventKind.cancel { DragState.active = false; }
+        }
+    }
+
+        // ── Drag ghost overlay ───────────────────────────────────────────────
+    if DragState.active: Rectangle {
+        x: 0; y: 0; width: root.width; height: root.height; background: transparent;
+        Rectangle {
+            x: DragState.cursor-x + 14px; y: DragState.cursor-y - 17px;
+            width: 200px; height: 34px; background: Theme.surface;
+            border-radius: 6px; border-width: 1px; border-color: Theme.border;
+            drop-shadow-blur: 20px; drop-shadow-offset-x: 0px; drop-shadow-offset-y: 6px;
+            drop-shadow-color: #00000022;
+            HorizontalLayout {
+                padding-left: 10px; padding-right: 10px; spacing: 8px; alignment: center;
+                Rectangle {
+                    width: 13px; height: 13px; border-radius: 3px; border-width: 1.5px;
+                    border-color: DragState.task-done ? Theme.accent : Theme.ink-ghost;
+                    background: DragState.task-done ? Theme.accent : transparent;
+                    Image { source: @image-url("../assets/icons/check.svg"); visible: DragState.task-done; width: 8px; height: 8px;
+                           horizontal-alignment: center; vertical-alignment: center; }
+                }
+                Text { text: DragState.task-text; font-size: 13px; overflow: elide;
+                       vertical-alignment: center;
+                       color: DragState.task-done ? Theme.done-ink : Theme.ink;
+                       font-italic: DragState.task-done; horizontal-stretch: 1; }
+            }
+        }
+    }
+
+    // ── Tag-Spalten Drop-Linie ───────────────────────────────────────────────
+    // drop-line-y ist eine absolute Screen-Y-Koordinate (von TaskRow._cy gesetzt).
+    // Die AppWindow-Position ist (0,0), daher y: drop-line-y direkt verwendbar.
+    // Sichtbar wenn DragState.target-col >= 0 (Tages-Spalte, nicht Someday).
+    if DragState.active && DragState.target-col >= 0: Rectangle {
+        x: days-rect.absolute-position.x
+           + DragState.target-col * (days-rect.width / 7) + 8px;
+        y: DragState.drop-line-y - 1px;
+        width: days-rect.width / 7 - 16px;
+        height: 2px;
+        background: Theme.drop-line;
+        border-radius: 1px;
+    }
+
+    // ── Bild-Popup ──────────────────────────────────────────────────────────
+    image-popup := PopupWindow {
+        width: min(root.width - 80px, 700px);
+        height: min(root.height - 80px, 560px);
+        x: (root.width  - self.width)  / 2;
+        y: (root.height - self.height) / 2;
+        close-policy: no-auto-close;
+
+        Rectangle {
+            border-radius: 10px; border-width: 1px; border-color: Theme.border;
+            background: Theme.surface;
+            drop-shadow-blur: 32px; drop-shadow-offset-y: 10px; drop-shadow-color: #00000030;
+            clip: true;
+
+            VerticalLayout {
+                // ── Toolbar ──────────────────────────────────────────────────
+                Rectangle {
+                    height: 44px; background: Theme.ink;
+                    HorizontalLayout {
+                        padding-left: 14px; padding-right: 8px; spacing: 8px; alignment: space-between;
+                        Text {
+                            text: "Anhang"; font-size: 13px; font-weight: 700;
+                            color: Theme.today-ink; vertical-alignment: center;
+                        }
+                        HorizontalLayout {
+                            spacing: 4px;
+                            // 🗑 Löschen
+                            del-img-btn := TouchArea {
+                                width: 36px; height: 36px;
+                                Rectangle {
+                                    border-radius: 5px;
+                                    background: del-img-btn.has-hover ? #ff444433 : transparent;
+                                    animate background { duration: 60ms; }
+                                    Image { source: @image-url("../assets/icons/trash.svg"); width: 16px; height: 16px;
+                                           horizontal-alignment: center; vertical-alignment: center; }
+                                }
+                                clicked => {
+                                    image-popup.close();
+                                    root.delete-image(
+                                        root.popup-image-col,
+                                        root.popup-image-list-idx,
+                                        root.popup-image-task-id
+                                    );
+                                }
+                            }
+                            // × Schließen
+                            close-img-btn := TouchArea {
+                                width: 36px; height: 36px;
+                                Rectangle {
+                                    border-radius: 5px;
+                                    background: close-img-btn.has-hover ? Theme.btn-hover : transparent;
+                                    animate background { duration: 60ms; }
+                                    Image { source: @image-url("../assets/icons/x.svg"); width: 20px; height: 20px;
+                                           horizontal-alignment: center; vertical-alignment: center; }
+                                }
+                                clicked => { image-popup.close(); }
+                            }
+                        }
+                    }
+                }
+                // ── Bild ─────────────────────────────────────────────────────
+                Image {
+                    source: root.popup-image;
+                    image-fit: contain;
+                    vertical-stretch: 1;
+                }
+            }
+        }
+    }
+
+    // ── Deutscher DatePicker ─────────────────────────────────────────────
+    date-picker := GermanDatePicker {
+        current-day:   root.picker-day;
+        current-month: root.picker-month;
+        current-year:  root.picker-year;
+        // OK: nur Datum übernehmen, kein TimePicker
+        accepted(d, m, y) => {
+            root.due-date-only(d, m, y);
+        }
+        // 🕐-Button: Datum merken, dann TimePicker öffnen
+        accepted-with-time(d, m, y) => {
+            root.picker-day   = d;
+            root.picker-month = m;
+            root.picker-year  = y;
+            time-picker.show();
+        }
+        canceled => { }
+    }
+
+    // ── Eigener TimePicker mit führenden Nullen ──────────────────────────
+    time-picker := TimePickerPopup {
+        width: 360px; height: 480px;
+        close-policy: no-auto-close;
+        use-24-hour-format: true;
+        time: { hour: root.picker-hour, minute: root.picker-minute };
+        accepted(time) => {
+            root.due-complete(root.picker-day, root.picker-month, root.picker-year,
+                              time.hour, time.minute);
+            time-picker.close();
+        }
+        canceled => {
+            root.due-date-only(root.picker-day, root.picker-month, root.picker-year);
+            time-picker.close();
+        }
+    }
+
+    // ── Einstellungs-Overlay ────────────────────────────────────────────────
+    if root.settings-open: Rectangle {
+        x: 0; y: 0; width: root.width; height: root.height;
+        z: 9000;
+        background: #00000055;
+
+        // Einstellungskarte (zentriert)
+        card := Rectangle {
+            x: (parent.width  - self.width)  / 2;
+            y: (parent.height - self.height) / 2;
+            width: 440px;
+            height: card-vl.preferred-height;
+            background: Theme.surface;
+            border-radius: 12px;
+            border-width: 1px; border-color: Theme.border;
+            drop-shadow-blur: 40px; drop-shadow-offset-y: 8px;
+            drop-shadow-color: #00000033;
+
+            card-vl := VerticalLayout {
+                // ── Kopfzeile ──────────────────────────────────────────────
+                Rectangle {
+                    height: 48px;
+                    background: Theme.hdr-bg;
+                    border-radius: 12px;
+                    // untere Ecken nicht runden (Karte ist darunter)
+                    clip: false;
+                    HorizontalLayout {
+                        padding-left: 20px; padding-right: 8px;
+                        Text { text: "Einstellungen"; color: Theme.today-ink;
+                               font-size: 13px; font-weight: 700; letter-spacing: 0.5px;
+                               vertical-alignment: center; horizontal-stretch: 1; }
+                        close-btn := TouchArea {
+                            width: 40px; height: 48px;
+                            Rectangle {
+                                border-radius: 5px;
+                                background: close-btn.has-hover ? Theme.hdr-btn-hover : transparent;
+                                animate background { duration: 80ms; }
+                                Text { text: "×"; font-size: 20px; color: Theme.today-ink;
+                                       horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                            clicked => { root.settings-open = false; }
+                        }
+                    }
+                }
+
+                // ── Inhalt ─────────────────────────────────────────────────
+                VerticalLayout {
+                    padding-top: 16px; padding-left: 24px; padding-right: 24px;
+                    padding-bottom: 20px; spacing: 14px;
+
+                    // Akzentfarbe
+                    VerticalLayout {
+                        spacing: 6px;
+                        Text { text: "AKZENTFARBE"; font-size: 9px; font-weight: 700;
+                               letter-spacing: 2px; color: Theme.ink-muted; }
+                        HorizontalLayout {
+                            spacing: 8px; alignment: start;
+                            for c[i] in ColorOptions.swatches: Rectangle {
+                                width: 32px; height: 32px;
+                                // Auswahlring: sichtbar wenn diese Farbe aktiv ist
+                                border-radius: 16px;
+                                border-width: root.accent-hex == c.hex ? 2px : 0px;
+                                border-color: Theme.ink;
+                                background: transparent;
+                                swatch-ta := TouchArea {
+                                    clicked => {
+                                        root.accent-hex = c.hex;
+                                        root.set-accent-color(c.hex);
+                                    }
+                                }
+                                // Farbkreis (etwas kleiner als äußerer Ring)
+                                Rectangle {
+                                    x: 4px; y: 4px;
+                                    width: parent.width - 8px;
+                                    height: parent.height - 8px;
+                                    border-radius: (parent.width - 8px) / 2;
+                                    background: c.col;
+                                    // Hover-Aufhellung
+                                    Rectangle {
+                                        border-radius: parent.border-radius;
+                                        background: swatch-ta.has-hover ? #ffffff28 : transparent;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Datenpfad
+                    VerticalLayout {
+                        spacing: 8px;
+                        Text { text: "DATENPFAD"; font-size: 9px; font-weight: 700;
+                               letter-spacing: 2px; color: Theme.ink-muted; }
+                        HorizontalLayout {
+                            spacing: 8px; height: 34px;
+                            // Pfad-Anzeige
+                            Rectangle {
+                                horizontal-stretch: 1;
+                                border-radius: 6px; border-width: 1px; border-color: Theme.border;
+                                background: Theme.hover-bg;
+                                Text { x: 10px; width: parent.width - 20px;
+                                       text: root.data-path-label;
+                                       font-size: 11px; color: Theme.ink;
+                                       vertical-alignment: center; overflow: elide; }
+                            }
+                            // Ändern-Button
+                            path-change-btn := TouchArea {
+                                width: 80px;
+                                Rectangle {
+                                    border-radius: 6px; border-width: 1px;
+                                    border-color: path-change-btn.has-hover ? Theme.ink : Theme.border;
+                                    background: path-change-btn.has-hover ? Theme.hover-bg : Theme.surface;
+                                    animate border-color { duration: 80ms; }
+                                    Text { text: "Ändern …"; font-size: 12px; color: Theme.ink;
+                                           horizontal-alignment: center; vertical-alignment: center; }
+                                }
+                                clicked => { root.change-data-path(); }
+                            }
+                        }
+                    }
+
+                    // Trennlinie
+                    Rectangle { height: 1px; background: Theme.border; }
+
+                    // Zurücksetzen
+                    reset-ta := TouchArea {
+                        height: 36px;
+                        Rectangle {
+                            border-radius: 6px; border-width: 1px;
+                            border-color: reset-ta.has-hover ? #dc2626 : Theme.border;
+                            background: reset-ta.has-hover ? #fef2f2 : Theme.surface;
+                            animate border-color { duration: 80ms; }
+                            animate background   { duration: 80ms; }
+                            Text { text: "Standardwerte zurücksetzen";
+                                   font-size: 12px;
+                                   color: reset-ta.has-hover ? #dc2626 : Theme.ink-muted;
+                                   horizontal-alignment: center; vertical-alignment: center; }
+                        }
+                        clicked => { root.reset-settings(); }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Globaler Tooltip-Overlay (oberste Ebene, nicht geclippt) ────────
+    if TooltipState.text != "": Rectangle {
+        x: min(max(TooltipState.ax - self.width / 2, 4px), root.width - self.width - 4px);
+        y: TooltipState.ay + 6px;
+        width: tip-text.preferred-width + 16px;
+        height: 24px;
+        background: #111111dd; border-radius: 4px;
+        border-width: 1px; border-color: #666666;
+        z: 99999;
+        tip-text := Text {
+            x: 8px; y: 4px;
+            text: TooltipState.text; font-size: 11px; color: #eeeeee;
+        }
+    }
+
+
+}
