@@ -729,7 +729,7 @@ component TaskRow inherits Rectangle {
     due-opts-popup := PopupWindow {
         x: max(0px, root.width - 175px); y: root.height;
         width: 175px;
-        close-policy: no-auto-close;
+        close-policy: close-on-click-outside;
         Rectangle {
             border-radius: 8px; border-width: 1px; border-color: Theme.border;
             background: Theme.surface;
@@ -782,51 +782,53 @@ component TaskRow inherits Rectangle {
                 }
 
                 // ── Uhrzeit ändern (nur wenn Uhrzeit vorhanden) ───────────
-                if task.due-time-label != "": Rectangle {
-                    height: 32px; clip: true;
-                    m-change-time := TouchArea {
-                        Rectangle {
-                            border-radius: 5px;
-                            background: m-change-time.has-hover ? Theme.hover-bg : transparent;
-                            animate background { duration: 60ms; }
-                            HorizontalLayout {
-                                padding-left: 10px; padding-top: 6px; padding-bottom: 6px; spacing: 6px;
-                                Rectangle { width: 20px; height: 20px;
-                                    Image { source: @image-url("../assets/icons/clock.svg"); width: 20px; height: 20px; } }
-                                Text { text: "Uhrzeit ändern"; font-size: 12px; color: Theme.ink;
-                                       vertical-alignment: center; }
-                            }
+                m-change-time := TouchArea {
+                    visible: task.due-time-label != "";
+                    height: task.due-time-label != "" ? 32px : 0px;
+                    enabled: task.due-time-label != "";
+                    Rectangle {
+                        visible: task.due-time-label != "";
+                        border-radius: 5px;
+                        background: m-change-time.has-hover ? Theme.hover-bg : transparent;
+                        animate background { duration: 60ms; }
+                        HorizontalLayout {
+                            padding-left: 10px; padding-top: 6px; padding-bottom: 6px; spacing: 6px;
+                            Rectangle { width: 20px; height: 20px;
+                                Image { source: @image-url("../assets/icons/clock.svg"); width: 20px; height: 20px; } }
+                            Text { text: "Uhrzeit ändern"; font-size: 12px; color: Theme.ink;
+                                   vertical-alignment: center; }
                         }
-                        clicked => { due-opts-popup.close(); root.open-time-picker(); }
                     }
+                    clicked => { due-opts-popup.close(); root.open-time-picker(); }
                 }
 
                 // ── Uhrzeit löschen (nur wenn Uhrzeit vorhanden) ──────────
-                if task.due-time-label != "": Rectangle {
-                    height: 32px; clip: true;
-                    m-clear-time := TouchArea {
-                        Rectangle {
-                            border-radius: 5px;
-                            background: m-clear-time.has-hover ? Theme.hover-bg : transparent;
-                            animate background { duration: 60ms; }
-                            HorizontalLayout {
-                                padding-left: 10px; padding-top: 6px; padding-bottom: 6px; spacing: 6px;
-                                Rectangle { width: 20px; height: 20px;
-                                    Image { source: @image-url("../assets/icons/clock.svg"); width: 20px; height: 20px; }
-                                    Rectangle {
-                                        x: parent.width - 8px; y: -2px;
-                                        width: 10px; height: 10px; border-radius: 5px;
-                                        background: Theme.surface; border-width: 0.5px; border-color: Theme.border;
-                                        Image { source: @image-url("../assets/icons/x.svg"); width: 8px; height: 8px;
-                                                horizontal-alignment: center; vertical-alignment: center; opacity: 0.8; }
-                                    }
+                m-clear-time := TouchArea {
+                    visible: task.due-time-label != "";
+                    height: task.due-time-label != "" ? 32px : 0px;
+                    enabled: task.due-time-label != "";
+                    Rectangle {
+                        visible: task.due-time-label != "";
+                        border-radius: 5px;
+                        background: m-clear-time.has-hover ? Theme.hover-bg : transparent;
+                        animate background { duration: 60ms; }
+                        HorizontalLayout {
+                            padding-left: 10px; padding-top: 6px; padding-bottom: 6px; spacing: 6px;
+                            Rectangle { width: 20px; height: 20px;
+                                Image { source: @image-url("../assets/icons/clock.svg"); width: 20px; height: 20px; }
+                                Rectangle {
+                                    x: parent.width - 8px; y: -2px;
+                                    width: 10px; height: 10px; border-radius: 5px;
+                                    background: Theme.surface; border-width: 0.5px; border-color: Theme.border;
+                                    Image { source: @image-url("../assets/icons/x.svg"); width: 8px; height: 8px;
+                                            horizontal-alignment: center; vertical-alignment: center; opacity: 0.8; }
                                 }
-                                Text { text: "Uhrzeit löschen"; font-size: 12px; color: Theme.ink;
-                                       vertical-alignment: center; }
                             }
+                            Text { text: "Uhrzeit löschen"; font-size: 12px; color: Theme.ink;
+                                   vertical-alignment: center; }
                         }
-                        clicked => { due-opts-popup.close(); root.time-cleared(); }
                     }
+                    clicked => { due-opts-popup.close(); root.time-cleared(); }
                 }
             }
         }
@@ -884,7 +886,8 @@ component DayColumn inherits Rectangle {
             drag-dropped   => { root.task-drag-dropped(); }
             set-due        => { root.set-task-due(root.col-index, task.id); }
             due-cleared    => { root.task-due-cleared(root.col-index, task.id); }
-            time-cleared   => { root.task-time-cleared(root.col-index, task.id); }
+            time-cleared      => { root.task-time-cleared(root.col-index, task.id); }
+            open-time-picker  => { root.task-open-time-picker(root.col-index, task.id); }
             renamed(t)         => { root.rename-task(root.col-index, task.id, t); }
             start-editing      => { root.start-editing(task.id); }
             stop-editing       => { root.stop-editing(); }

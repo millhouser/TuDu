@@ -1,9 +1,6 @@
 neue Ideen
 ==========
 
-Datum PopUp
------------
-Uhrzeit ändern und löschen funktioniert nicht. Das PopUp sollte wieder verschwinden, wenn ich irgendwo anders auf das Fenster klicke oder Escape drücke.
 
 erledigt
 ========
@@ -103,3 +100,7 @@ Füge einen Über-Dialog ein
 Icon
 ----
 Die png- und die ico-Datei des Icons sind nicht korrekt. Und die icon_preview.png ist noch vom alten Icon, die wird aber meiner Ansicht nach nicht mehr gebraucht und kann weg.
+
+Datum PopUp
+-----------
+Uhrzeit ändern und löschen funktioniert nicht. Das PopUp sollte wieder verschwinden, wenn ich irgendwo anders auf das Fenster klicke oder Escape drücke.
