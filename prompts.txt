@@ -1,0 +1,96 @@
+neue Ideen
+==========
+
+als erledigt markieren
+----------------------
+Wenn ein Task im Editiermodus ist und ich markiere ihn als erledigt soll der Editiermodus sofort beendet werden und die Darstellung für erledigte Tasks angewendet werden.
+Die Vierecke zum erledigt markieren sollen Kreise sein. Wenn ein Task als erledigt markiert ist soll dann nicht der Kreis ausgefüllt sein sondern eine Häkchen darauf erscheinen.
+
+undo/redo
+---------
+Aktionen, die durch einen Tageswechsel ausgelöst wurden, sollen nicht in der undo/redo-History auftauchen.
+
+DatePicker Titelleiste
+----------------------
+Wenn ich in der Titelleiste auf das Datum klicke soll ein DatePicker aufgehen. Wenn ich auf OK klicke soll die Ansicht auf diesen Tag springen.
+
+Icon
+----
+Die png- und die ico-Datei des Icons sind nicht korrekt. Und die icon_preview.png ist noch vom alten Icon, die wird aber meiner Ansicht nach nicht mehr gebraucht und kann weg.
+
+Standardwerte
+-------------
+Text Button Einstellungen "Standardwerte zurücksetzen" -> "Standardwerte wiederherstellen"
+
+Overlay erledigte Tasks
+-----------------------
+Im Overlay bei erledigten Tasks macht eigentlich nur das x Sinn. Kannst du bei diesen die restlichen Symbole weglassen?
+
+erledigt
+========
+
+Wenn ich auf einen Task klicke zum Editieren bitte den Cursor da hinsetzen, wo ich geklickt habe.
+Wenn ich den Namen einer Liste ändern möchte, muss ich zweimal draufklicken (kein Doppelklick). Genauso wenn ich das Bearbeiten beenden möchte muss ich zweimal woanders hinklicken. Mache es bitte gleich wie bei den Tasks.
+Verschiebe bitte beim Programmstart und bei einem Tageswechsel (Mitternacht) alle unerledigten Tasks auf den heutigen Tag. Erledigte können in der Vergangenheit bleiben. Aber ich möchte auch in der Vergangenheit Tasks von erledigt auf unerledigt setzen können. Und wenn ich das mache, sollen sie sofort auf den heutigen Tag verschoben werden.
+Wenn der Knopf Erledigte ausblenden gedrückt ist bitte nicht die Farbe ändern, sondern nur den Text.
+Bitte die Knöpfe für Rückgängig und Wiederholen nach links schieben direkt rechts vom Programmnamen und nur Pfeile in voller Höhe der Knöpfe, ohne Text.
+
+undo/redo über Programmneustart hinweg
+--------------------------------------
+Kannst du die undo/redo-History auch behalten, wenn das Programm beendet und neu gestartet wird? Und schlage mir eine Lösung vor, wie damit umgegangen werden sollte, falls die data.json-Datei zwischen Programm-Ende und Neustart geändert wurde. Diese Lösung bitte auch gleich implementieren.
+
+Bilder anhängen
+---------------
+Ich möchte an Tasks auch Bilder anhängen können. Sowohl per drag and drop als auch über ein Büroklammersymbol im Task. Wenn noch nichts angehängt ist, soll die Büroklammer nur erscheinen, wenn der Mauszeiger über dem Task ist. Ist ein Bild angehängt, soll sie dauerhaft erscheinen und wenn ich darauf klicke soll das Bild als Popup aufgehen. In diesem Popup soll auch ein Mülleimersymbol erscheinen, mit dem ich das Bild wieder löschen kann. Wenn ein Bild an einen Task angehängt wird, speichere bitte eine Kopie in dem Ordner, in dem auch die data.json-Datei ist. Lösche ich das Bild aus dem Task soll es auch aus dem Ordner wieder gelöscht werden, aber erst, wenn ich es über die undo-Funktion nicht wiederherstellen kann. Als Bildformate sollen jpg und png möglich sein.
+
+Tasks farblich markieren
+------------------------
+Füge eine Möglichkeit hinzu, jedem Task eine Farbe zuzuweisen. Die Farbe möchte ich über einen ColourPicker auswählen, in dem eine gewisse Vorauswahl an Farben vorgegeben ist.
+
+data.json überwachen
+--------------------
+Kannst du die data.json und die data.history.json so überwachen, dass, wenn sie außerhalb des Programms geändert wurden, die Änderungen sofort übernommen werden? So kann das Program gleichzeitig auf mehreren Geräten benutzt werden, wenn der Pfad für die Daten auf einem Colud-Ordner liegt. Berücksichtige das auch in der undo/redo-Strategie.
+
+Diverses
+--------
+Oh man, jetzt stürzt das Programm wieder ab, sobald ich einen Listentitel anklicke. Bitte sicher beheben.
+
+Mache die Symbole der undo/redo-Knöpfe doppelt so groß und entferne den Rand der Knöpfe.
+
+Ändere die Pfadangabe von der data.json in den Ordner-Pfad, wo die data.json etc. abgelegt sind.
+
+Overlay, die 2.
+---------------
+Jetzt möchte ich, dass du ein Overlay einfügst, dass folgende Bedingungen erfüllt:
+
+- es soll rechtsbündig über einem Task erscheinen, sobald ich bei diesem mit der Maus über das Feld an der rechten Seite fahre, in dem das Fälligkeitsdatum und/oder die Büroklammer erscheinen können. Und wirklich nur, wenn ich dort mit dem Mauszeiger darüberfahre.
+- dieses Overlay soll, von links nach rechts, enthalten:
+  * einen Kreis. Wenn ich diesen anklicke, soll ein Colopicker, mit dem ich die Farbe für die farbliche Markierung des Tasks auswählen kann, erscheinen. Der Kreis soll einen scharzen Rand haben und mit der aktuellen Hervorhebungsfarbe gefüllt sein.
+  * eine Büroklammer. Wenn ich diese anklicke soll ein Dateiauswahldialog aufgehen, mit dem ich jeweils eine jpg- oder png-Datei auswählen kann, die dann mit dem bestehenden Verfahren an den Task angehängt wird.
+  * ein Kalendersymbol. Wenn ich dieses anklicke soll wie bisher der DatePicker angezigt werden mit der optionalen Weiterleitung zu einem TimePicker
+  * ein x. Wenn ich dieses anklicke soll der Task gelöscht werden.
+- Der Rest des Tasks soll davon unberührt bleiben.
+- Das Overlay soll auch erscheinen, wenn der Task im Editiermodus ist.
+- Das Overlay soll so lange angezeigt werden, wie ich mit der Maus über diesem bin
+- Sobald ich das Overlay mit der Maus verlasse soll es wieder verschwinden.
+
+erster Tag
+----------
+Bis jetzt wird immer die aktuelle Woche von Montag bis Sonntag angezeigt. Ich möchte jetzt aber, dass heute immer in der ganz linken Spalte ist und die nächsten 6 Tage in den folgenden Spalten. Dadurch stimmt dann aber die Anzeige der Kalenderwoche links vom Zeitraum nicht mehr, da ja dann auch Tage von zwei verschiedenen Wochen angezigt werden können. Vielleicht kannst du das so anpassen, dass dann beide Kalenderwochen angezeigt werden, etwa in dem Format KW11 | KW12. Bei einem Tageswechsel um Mitternacht soll die Anzeige aktualisiert werden.
+
+Benachrichtigung
+----------------
+In der Benachrichtigung, wenn ein Task fällig wurde, erscheint nur die Uhrzeit. Das Datum muss auch mit angezeigt werden.
+
+Einstellungen
+-------------
+- Zeile mit Pfad weg
+- Ordner-Symbol durch Zahnrad ersetzen
+- PopUp-Fenster mit Einstellungen:
+  * Pfad
+  * Farb-Schema incl. neues Icon
+
+Verbesserungen
+--------------
+Im Colorpicker-Dialog ist ein Button für "Keine Farbe". Vor dem Text ist ein x. Dieses x entfernen.
+Das x im Einstellungsfenster ist bei schwarz als Akzent-Farbe nicht mehr zu sehen.
