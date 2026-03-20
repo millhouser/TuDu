@@ -1,30 +1,9 @@
 neue Ideen
 ==========
 
-als erledigt markieren
-----------------------
-Wenn ein Task im Editiermodus ist und ich markiere ihn als erledigt soll der Editiermodus sofort beendet werden und die Darstellung für erledigte Tasks angewendet werden.
-Die Vierecke zum erledigt markieren sollen Kreise sein. Wenn ein Task als erledigt markiert ist soll dann nicht der Kreis ausgefüllt sein sondern eine Häkchen darauf erscheinen.
-
-undo/redo
----------
-Aktionen, die durch einen Tageswechsel ausgelöst wurden, sollen nicht in der undo/redo-History auftauchen.
-
-DatePicker Titelleiste
-----------------------
-Wenn ich in der Titelleiste auf das Datum klicke soll ein DatePicker aufgehen. Wenn ich auf OK klicke soll die Ansicht auf diesen Tag springen.
-
-Icon
-----
-Die png- und die ico-Datei des Icons sind nicht korrekt. Und die icon_preview.png ist noch vom alten Icon, die wird aber meiner Ansicht nach nicht mehr gebraucht und kann weg.
-
-Standardwerte
--------------
-Text Button Einstellungen "Standardwerte zurücksetzen" -> "Standardwerte wiederherstellen"
-
-Overlay erledigte Tasks
------------------------
-Im Overlay bei erledigten Tasks macht eigentlich nur das x Sinn. Kannst du bei diesen die restlichen Symbole weglassen?
+Datum PopUp
+-----------
+Uhrzeit ändern und löschen funktioniert nicht. Das PopUp sollte wieder verschwinden, wenn ich irgendwo anders auf das Fenster klicke oder Escape drücke.
 
 erledigt
 ========
@@ -94,3 +73,33 @@ Verbesserungen
 --------------
 Im Colorpicker-Dialog ist ein Button für "Keine Farbe". Vor dem Text ist ein x. Dieses x entfernen.
 Das x im Einstellungsfenster ist bei schwarz als Akzent-Farbe nicht mehr zu sehen.
+
+als erledigt markieren
+----------------------
+Wenn ein Task im Editiermodus ist und ich markiere ihn als erledigt soll der Editiermodus sofort beendet werden und die Darstellung für erledigte Tasks angewendet werden.
+Die Vierecke zum erledigt markieren sollen Kreise sein. Wenn ein Task als erledigt markiert ist soll dann nicht der Kreis ausgefüllt sein sondern eine Häkchen darauf erscheinen.
+
+undo/redo
+---------
+Aktionen, die durch einen Tageswechsel ausgelöst wurden, sollen nicht in der undo/redo-History auftauchen.
+
+
+Overlay erledigte Tasks
+-----------------------
+Im Overlay bei erledigten Tasks macht eigentlich nur das x Sinn. Kannst du bei diesen die restlichen Symbole weglassen?
+
+Standardwerte
+-------------
+Text Button Einstellungen "Standardwerte zurücksetzen" -> "Standardwerte wiederherstellen"
+
+DatePicker Titelleiste
+----------------------
+Wenn ich in der Titelleiste auf das Datum klicke soll ein DatePicker aufgehen. Wenn ich auf OK klicke soll die Ansicht auf diesen Tag springen.
+
+Über Dialog
+-----------
+Füge einen Über-Dialog ein
+
+Icon
+----
+Die png- und die ico-Datei des Icons sind nicht korrekt. Und die icon_preview.png ist noch vom alten Icon, die wird aber meiner Ansicht nach nicht mehr gebraucht und kann weg.

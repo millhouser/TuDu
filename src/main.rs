@@ -5,7 +5,7 @@
 
 mod tray_win;
 
-use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime, Weekday};
+use chrono::{Datelike, Timelike, Duration, Local, NaiveDate, NaiveDateTime, Weekday};
 use notify_rust::Notification;
 use serde::{Deserialize, Serialize};
 use slint::{Model, ModelRc, SharedString, TimerMode, VecModel};
@@ -161,7 +161,7 @@ fn load_history(data_path: &PathBuf) -> UndoStack {
 // ─── Date/time helpers ───────────────────────────────────────────────────────
 
 fn start_date(week_offset: i32) -> NaiveDate {
-    Local::now().date_naive() + Duration::days(week_offset as i64 * 7)
+    Local::now().date_naive() + Duration::days(week_offset as i64)
 }
 
 fn kw_label(start: NaiveDate) -> String {
@@ -737,6 +737,13 @@ fn main() -> Result<(), slint::PlatformError> {
         ui.set_week_label(SharedString::from(week_label(start).as_str()));
         ui.set_kw_label(SharedString::from(kw_label(start).as_str()));
         ui.set_days(build_days(start, &d, hd));
+        // Heutiges Datum + Uhrzeit für TimePicker/DatePicker
+        let today_nd = Local::now().date_naive();
+        ui.set_today_day(today_nd.day() as i32);
+        ui.set_today_month(today_nd.month() as i32);
+        ui.set_today_year(today_nd.year() as i32);
+        ui.set_today_hour(Local::now().hour() as i32);
+        ui.set_today_minute(Local::now().minute() as i32);
         ui.set_someday_lists(build_someday(&d, hd));
         ui.set_data_path_label(SharedString::from(fp.parent().unwrap_or(fp.as_path()).to_string_lossy().as_ref()));
         // Gespeicherte Akzentfarbe anwenden
@@ -783,6 +790,12 @@ fn main() -> Result<(), slint::PlatformError> {
             ui.set_someday_lists(build_someday(&d, hd));
             ui.set_hide_done(hd);
             ui.set_data_path_label(SharedString::from(fp.parent().unwrap_or(fp.as_path()).to_string_lossy().as_ref()));
+            let today_nd = Local::now().date_naive();
+            ui.set_today_day(today_nd.day() as i32);
+            ui.set_today_month(today_nd.month() as i32);
+            ui.set_today_year(today_nd.year() as i32);
+            ui.set_today_hour(Local::now().hour() as i32);
+            ui.set_today_minute(Local::now().minute() as i32);
         }
     };
 
@@ -792,11 +805,25 @@ fn main() -> Result<(), slint::PlatformError> {
 
     // navigate-week (shifts the 7-day window by full weeks)
     { let off_r = Rc::clone(&week_offset); let rf = refresh.clone();
-      ui.on_navigate_week(move |d| { *off_r.borrow_mut() += d; rf(); }); }
+      ui.on_navigate_week(move |d| { *off_r.borrow_mut() += d * 7; rf(); }); }
 
     // navigate-today (reset to window starting today)
     { let off_r = Rc::clone(&week_offset); let rf = refresh.clone();
       ui.on_navigate_today(move || { *off_r.borrow_mut() = 0; rf(); }); }
+
+    // navigate-to-date: springe zu einem bestimmten Datum
+    { let off_r = Rc::clone(&week_offset); let rf = refresh.clone();
+      ui.on_navigate_to_date(move |day, month, year| {
+        let target = NaiveDate::from_ymd_opt(year as i32, month as u32, day as u32)
+            .unwrap_or_else(|| Local::now().date_naive());
+        let today = Local::now().date_naive();
+        // div_euclid = floor-Division: stellt sicher dass target in der 7-Tage-Ansicht sichtbar ist.
+        // Beispiel: diff=-1 (gestern) → -1.div_euclid(7) = -1 → Ansicht beginnt 7 Tage vor heute.
+        // Rust's "/" truncates toward zero → diff=-1 würde 0 ergeben, gestern wäre unsichtbar.
+        let diff = (target - today).num_days();
+        *off_r.borrow_mut() = diff as i32;
+        rf();
+    }); }
 
     // add-task
     { let off_r = Rc::clone(&week_offset); let d_r = Rc::clone(&app_data);
@@ -1286,7 +1313,6 @@ fn main() -> Result<(), slint::PlatformError> {
       let edit_r = Rc::clone(&editing);
       let rf     = refresh.clone();
       ui.on_due_complete(move |day, month, year, hour, minute| {
-        // Guard: Datum+Uhrzeit darf nicht in der Vergangenheit liegen
         if let Some(chosen_date) = NaiveDate::from_ymd_opt(year, month as u32, day as u32) {
             if let Some(chosen_dt) = chosen_date.and_hms_opt(hour as u32, minute as u32, 0) {
                 if chosen_dt < Local::now().naive_local() { return; }
@@ -1346,7 +1372,74 @@ fn main() -> Result<(), slint::PlatformError> {
         apply_due(&d_r, start, &fp_r, &cfg_r, &us_r, &low_r, &edit_r, None, None, &rf);
     }); }
 
-    // ── attach-image: Dateidialog → Bild kopieren → Task aktualisieren ──────
+    // ── open-time-picker-for: TimePicker direkt öffnen (Uhrzeit ändern) ────────
+    { let d_r    = Rc::clone(&app_data);
+      let off_r  = Rc::clone(&week_offset);
+      let ui_w   = ui.as_weak();
+      let edit_r = Rc::clone(&editing);
+      ui.on_open_time_picker_for(move |col, list_idx, task_id| {
+        let d     = d_r.borrow();
+        let start = start_date(*off_r.borrow());
+        let task: Option<TaskRecord> = if col >= 0 {
+            let date = start + Duration::days(col as i64);
+            d.day_tasks.get(&date_key(date))
+                .and_then(|v| v.iter().find(|t| t.id == task_id.as_str())).cloned()
+        } else {
+            d.someday_lists.get(list_idx as usize)
+                .and_then(|l| l.tasks.iter().find(|t| t.id == task_id.as_str())).cloned()
+        };
+        drop(d);
+        *edit_r.borrow_mut() = Some((col, list_idx, task_id.to_string()));
+        let ui = ui_w.unwrap();
+        // Pre-populate with existing date (required) and time
+        if let Some(ref t) = task {
+            if let Some(ref ds) = t.due_date {
+                let today = Local::now().date_naive();
+                let date = parse_date(ds).unwrap_or(today);
+                ui.set_picker_day(date.day() as i32);
+                ui.set_picker_month(date.month() as i32);
+                ui.set_picker_year(date.year() as i32);
+            }
+            if let Some(ref ts) = t.due_time {
+                let parts: Vec<&str> = ts.split(':').collect();
+                if parts.len() == 2 {
+                    ui.set_picker_hour(parts[0].parse().unwrap_or(9));
+                    ui.set_picker_minute(parts[1].parse().unwrap_or(0));
+                }
+            }
+        }
+        ui.set_time_picker_open(true);
+    }); }
+
+    // ── clear-time-for: nur Uhrzeit löschen, Datum behalten ──────────────────
+    { let d_r    = Rc::clone(&app_data);
+      let off_r  = Rc::clone(&week_offset);
+      let fp_r   = Rc::clone(&data_file);
+      let cfg_r  = Rc::clone(&cfg);
+      let us_r   = Rc::clone(&undo_stack);
+      let low_r  = Rc::clone(&last_own_write);
+      let edit_r = Rc::clone(&editing);
+      let rf     = refresh.clone();
+      ui.on_clear_time_for(move |col, list_idx, task_id| {
+        // Genau wie due_cleared_for, aber Datum aus Task auslesen + Zeit = None
+        *edit_r.borrow_mut() = Some((col, list_idx, task_id.to_string()));
+        let start = start_date(*off_r.borrow());
+        let date_str = {
+            let d = d_r.borrow();
+            let task_opt: Option<&TaskRecord> = if col >= 0 {
+                let date = start + Duration::days(col as i64);
+                d.day_tasks.get(&date_key(date))
+                    .and_then(|v| v.iter().find(|t| t.id == task_id.as_str()))
+            } else {
+                d.someday_lists.get(list_idx as usize)
+                    .and_then(|l| l.tasks.iter().find(|t| t.id == task_id.as_str()))
+            };
+            task_opt.and_then(|t| t.due_date.clone())
+        };
+        apply_due(&d_r, start, &fp_r, &cfg_r, &us_r, &low_r, &edit_r, date_str, None, &rf);
+    }); }
+
+        // ── attach-image: Dateidialog → Bild kopieren → Task aktualisieren ──────
     { let d_r = Rc::clone(&app_data); let off_r = Rc::clone(&week_offset);
       let fp_r = Rc::clone(&data_file); let low_r = Rc::clone(&last_own_write); let cfg_r = Rc::clone(&cfg);
       let sn = snapshot.clone(); let us_r = Rc::clone(&undo_stack); let rf = refresh.clone();
@@ -1533,7 +1626,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let fp_r  = Rc::clone(&data_file);
         let low_r = Rc::clone(&last_own_write);
         let cfg_r = Rc::clone(&cfg);
-        let us_r  = Rc::clone(&undo_stack);
+        let _us_r = Rc::clone(&undo_stack);
         let rf    = refresh.clone();
         let mut last_date = Local::now().date_naive();
         midnight_timer.start(TimerMode::Repeated, std::time::Duration::from_secs(30), move || {
@@ -1542,7 +1635,11 @@ fn main() -> Result<(), slint::PlatformError> {
                 last_date = today;
                 let mut d = d_r.borrow_mut();
                 rollover_undone(&mut d, today);
-                save_and_record(&d, &fp_r.borrow(), &cfg_r, &us_r.borrow(), &low_r);
+                // Rollover NICHT in Undo-History aufnehmen → save_data direkt
+                save_data(&d, &fp_r.borrow());
+                let mtime = file_mtime_secs(&fp_r.borrow());
+                cfg_r.borrow_mut().last_saved_secs = mtime;
+                *low_r.borrow_mut() = mtime;
                 drop(d);
                 rf();
             }

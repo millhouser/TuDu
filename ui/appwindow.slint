@@ -49,8 +49,9 @@ export global Theme {
     out property <color> btn-hover:  #383838;
     // Titelleiste und Listentitel = Akzentfarbe
     out property <color> hdr-bg:     self.accent;
-    // Hover auf hdr-bg etwas aufhellen/abdunkeln
     out property <color> hdr-btn-hover: self.accent.darker(15%);
+    // Hover für dunkle/schwarze Buttons: mix mit Weiß → funktioniert auch auf schwarz
+    out property <color> btn-accent-hover: self.accent.mix(#606060, 40%);
     out property <color> due-ok:     #888884;
     out property <color> due-today:  #e07b00;
     out property <color> due-over:   #c0392b;
@@ -291,7 +292,9 @@ component TaskRow inherits Rectangle {
     callback deleted();
     callback drag-dropped();
     callback set-due();
-    callback due-cleared();   // Datum entfernen (aus lokalem due-options-popup)
+    callback due-cleared();       // Datum entfernen
+    callback time-cleared();      // Nur Uhrzeit entfernen, Datum behalten
+    callback open-time-picker();  // TimePicker öffnen (Uhrzeit ändern)
     callback renamed(string);
     callback start-editing();
     callback stop-editing();
@@ -412,6 +415,7 @@ component TaskRow inherits Rectangle {
                && e.button == PointerEventButton.left
                && !grip-ta.drag-mode {
                 if self.mouse-x >= 24px && self.mouse-x < 54px {
+                    if root.editing { root.stop-editing(); }
                     root.toggled();
                 } else if self.mouse-x >= 54px && !task.done {
                     root.start-editing();
@@ -469,10 +473,9 @@ component TaskRow inherits Rectangle {
                 width: 17px; height: 17px;
                 x: (parent.width - 17px) / 2;
                 y: (parent.height - 17px) / 2;
-                border-radius: 3px; border-width: 1.5px;
+                border-radius: 8.5px; border-width: 1.5px;
                 border-color: task.done ? Theme.accent : Theme.ink-ghost;
-                background:   task.done ? Theme.accent : transparent;
-                animate background   { duration: 100ms; }
+                background:   transparent;
                 animate border-color { duration: 100ms; }
                 Image { source: @image-url("../assets/icons/check.svg"); visible: task.done;
                        width: 10px; height: 10px;
@@ -571,53 +574,7 @@ component TaskRow inherits Rectangle {
         picked(hex) => { root.set-color(hex); }
     }
 
-    // ── Due-Date-Optionen Popup (lokal, direkt am Task) ─────────────────────
-    // Erscheint wenn Aufgabe bereits ein Fälligkeitsdatum hat.
-    // x: root.width - 170px → rechtsbündig; y: root.height → direkt darunter.
-    due-opts-popup := PopupWindow {
-        x: max(0px, root.width - 170px); y: root.height;
-        width: 170px; height: 86px;
-        close-policy: close-on-click;
-        Rectangle {
-            border-radius: 8px; border-width: 1px; border-color: Theme.border;
-            background: Theme.surface;
-            drop-shadow-blur: 16px; drop-shadow-offset-y: 4px; drop-shadow-color: #00000018;
-            VerticalLayout {
-                padding: 8px; spacing: 4px;
-                opt-change-ta := TouchArea {
-                    height: 32px;
-                    Rectangle {
-                        border-radius: 5px;
-                        background: opt-change-ta.has-hover ? Theme.hover-bg : transparent;
-                        animate background { duration: 60ms; }
-                        HorizontalLayout {
-                            padding-left: 10px; padding-top: 6px; padding-bottom: 6px; spacing: 6px;
-                            Image { source: @image-url("../assets/icons/calendar.svg"); width: 20px; height: 20px; }
-                            Text { text: "Datum ändern"; font-size: 12px; color: Theme.ink;
-                                   vertical-alignment: center; }
-                        }
-                    }
-                    clicked => { due-opts-popup.close(); root.set-due(); }
-                }
-                opt-clear-ta := TouchArea {
-                    height: 32px;
-                    Rectangle {
-                        border-radius: 5px;
-                        background: opt-clear-ta.has-hover ? Theme.hover-bg : transparent;
-                        animate background { duration: 60ms; }
-                        HorizontalLayout {
-                            padding-left: 10px; padding-top: 6px; padding-bottom: 6px; spacing: 6px;
-                            Image { source: @image-url("../assets/icons/x.svg"); width: 20px; height: 20px; opacity: 0.8; }
-                            Text { text: "Datum entfernen"; font-size: 12px; color: Theme.ink;
-                                   vertical-alignment: center; }
-                        }
-                    }
-                    clicked => { due-opts-popup.close(); root.due-cleared(); }
-                }
-            }
-        }
-    }
-
+    // ── Due-Date-Optionen Menü (if-Overlay, bleibt in TaskRow-Scope) ──────────
     // ── Icon-Overlay ──────────────────────────────────────────────────────────
     // visible: root.show-overlay — KEINE Zirkularität (show-overlay ist Zustandsvariable).
     // Eintritt: date-ta.changed has-hover setzt show-overlay=true.
@@ -625,8 +582,10 @@ component TaskRow inherits Rectangle {
     // x: max(0px, ...) → bei kleinem Fenster nie außerhalb links.
     overlay-rect := Rectangle {
         visible: root.show-overlay;
-        x: max(0px, root.width - 116px); y: 0;
-        width: 116px; height: root.height;
+        // Erledigte Tasks: nur × anzeigen (29px Breite)
+        property <length> overlay-w: task.done ? 29px : 116px;
+        x: max(0px, root.width - overlay-w); y: 0;
+        width: overlay-w; height: root.height;
         background: Theme.hover-bg;
 
         overlay-ta := TouchArea {
@@ -635,7 +594,9 @@ component TaskRow inherits Rectangle {
                 if (e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel)
                    && e.button == PointerEventButton.left
                    && !grip-ta.drag-mode {
-                    if self.mouse-x >= 87px {
+                    if task.done {
+                        root.deleted();
+                    } else if self.mouse-x >= 87px {
                         root.deleted();
                     } else if self.mouse-x >= 58px && !task.done {
                         if task.due-label != "" {
@@ -654,8 +615,8 @@ component TaskRow inherits Rectangle {
             }
         }
 
-        // 🎨 Farbkreis (0..29)
-        Rectangle {
+        // 🎨 Farbkreis (0..29) — nur bei nicht-erledigten Tasks
+        if !task.done: Rectangle {
             x: 7px; y: (parent.height - 16px) / 2;
             width: 16px; height: 16px; border-radius: 8px;
             border-width: 1.5px;
@@ -679,28 +640,29 @@ component TaskRow inherits Rectangle {
                     task.color-hex == "#b0bec5" ? #b0bec5 :
                     Theme.surface;
         }
-        // 📎 Büroklammer (29..58)
-        Image {
+        // 📎 Büroklammer (29..58) — nur bei nicht-erledigten Tasks
+        if !task.done: Image {
             x: 34px; width: 18px; height: 18px;
             source: @image-url("../assets/icons/clip.svg");
             horizontal-alignment: center; vertical-alignment: center;
             opacity: task.has-image ? 1.0
                  : (overlay-ta.mouse-x >= 29px && overlay-ta.mouse-x < 58px) ? 0.7 : 0.4;
         }
-        // 📅 Kalender (58..87)
-        Image {
+        // 📅 Kalender (58..87) — nur bei nicht-erledigten Tasks
+        if !task.done: Image {
             x: 63px; width: 18px; height: 18px;
             source: @image-url("../assets/icons/calendar.svg");
             horizontal-alignment: center; vertical-alignment: center;
             opacity: task.done ? 0.4
                  : (overlay-ta.mouse-x >= 58px && overlay-ta.mouse-x < 87px) ? 1.0 : 0.6;
         }
-        // × Löschen (87..116)
+        // × Löschen
         Image {
-            x: 92px; width: 18px; height: 18px;
+            x: task.done ? 5px : 92px; width: 18px; height: 18px;
             source: @image-url("../assets/icons/x.svg");
             horizontal-alignment: center; vertical-alignment: center;
-            opacity: overlay-ta.mouse-x >= 87px ? 1.0 : 0.6;
+            opacity: task.done ? (overlay-ta.has-hover ? 1.0 : 0.6)
+                               : (overlay-ta.mouse-x >= 87px ? 1.0 : 0.6);
         }
     }
 
@@ -763,6 +725,113 @@ component TaskRow inherits Rectangle {
             }
         }
     }
+    // ── Due-Date-Optionen als PopupWindow (no-auto-close) ───────────────────
+    due-opts-popup := PopupWindow {
+        x: max(0px, root.width - 175px); y: root.height;
+        width: 175px;
+        close-policy: no-auto-close;
+        Rectangle {
+            border-radius: 8px; border-width: 1px; border-color: Theme.border;
+            background: Theme.surface;
+            drop-shadow-blur: 16px; drop-shadow-offset-y: 4px; drop-shadow-color: #00000018;
+            VerticalLayout {
+                padding: 8px; spacing: 4px;
+
+                // ── Datum ändern ──────────────────────────────────────────
+                m-change := TouchArea {
+                    height: 32px;
+                    Rectangle {
+                        border-radius: 5px;
+                        background: m-change.has-hover ? Theme.hover-bg : transparent;
+                        animate background { duration: 60ms; }
+                        HorizontalLayout {
+                            padding-left: 10px; padding-top: 6px; padding-bottom: 6px; spacing: 6px;
+                            Rectangle { width: 20px; height: 20px;
+                                Image { source: @image-url("../assets/icons/calendar.svg"); width: 20px; height: 20px; } }
+                            Text { text: "Datum ändern"; font-size: 12px; color: Theme.ink;
+                                   vertical-alignment: center; }
+                        }
+                    }
+                    clicked => { due-opts-popup.close(); root.set-due(); }
+                }
+
+                // ── Datum löschen ─────────────────────────────────────────
+                m-clear-date := TouchArea {
+                    height: 32px;
+                    Rectangle {
+                        border-radius: 5px;
+                        background: m-clear-date.has-hover ? Theme.hover-bg : transparent;
+                        animate background { duration: 60ms; }
+                        HorizontalLayout {
+                            padding-left: 10px; padding-top: 6px; padding-bottom: 6px; spacing: 6px;
+                            Rectangle { width: 20px; height: 20px;
+                                Image { source: @image-url("../assets/icons/calendar.svg"); width: 20px; height: 20px; }
+                                Rectangle {
+                                    x: parent.width - 8px; y: -2px;
+                                    width: 10px; height: 10px; border-radius: 5px;
+                                    background: Theme.surface; border-width: 0.5px; border-color: Theme.border;
+                                    Image { source: @image-url("../assets/icons/x.svg"); width: 8px; height: 8px;
+                                            horizontal-alignment: center; vertical-alignment: center; opacity: 0.8; }
+                                }
+                            }
+                            Text { text: "Datum löschen"; font-size: 12px; color: Theme.ink;
+                                   vertical-alignment: center; }
+                        }
+                    }
+                    clicked => { due-opts-popup.close(); root.due-cleared(); }
+                }
+
+                // ── Uhrzeit ändern (nur wenn Uhrzeit vorhanden) ───────────
+                if task.due-time-label != "": Rectangle {
+                    height: 32px; clip: true;
+                    m-change-time := TouchArea {
+                        Rectangle {
+                            border-radius: 5px;
+                            background: m-change-time.has-hover ? Theme.hover-bg : transparent;
+                            animate background { duration: 60ms; }
+                            HorizontalLayout {
+                                padding-left: 10px; padding-top: 6px; padding-bottom: 6px; spacing: 6px;
+                                Rectangle { width: 20px; height: 20px;
+                                    Image { source: @image-url("../assets/icons/clock.svg"); width: 20px; height: 20px; } }
+                                Text { text: "Uhrzeit ändern"; font-size: 12px; color: Theme.ink;
+                                       vertical-alignment: center; }
+                            }
+                        }
+                        clicked => { due-opts-popup.close(); root.open-time-picker(); }
+                    }
+                }
+
+                // ── Uhrzeit löschen (nur wenn Uhrzeit vorhanden) ──────────
+                if task.due-time-label != "": Rectangle {
+                    height: 32px; clip: true;
+                    m-clear-time := TouchArea {
+                        Rectangle {
+                            border-radius: 5px;
+                            background: m-clear-time.has-hover ? Theme.hover-bg : transparent;
+                            animate background { duration: 60ms; }
+                            HorizontalLayout {
+                                padding-left: 10px; padding-top: 6px; padding-bottom: 6px; spacing: 6px;
+                                Rectangle { width: 20px; height: 20px;
+                                    Image { source: @image-url("../assets/icons/clock.svg"); width: 20px; height: 20px; }
+                                    Rectangle {
+                                        x: parent.width - 8px; y: -2px;
+                                        width: 10px; height: 10px; border-radius: 5px;
+                                        background: Theme.surface; border-width: 0.5px; border-color: Theme.border;
+                                        Image { source: @image-url("../assets/icons/x.svg"); width: 8px; height: 8px;
+                                                horizontal-alignment: center; vertical-alignment: center; opacity: 0.8; }
+                                    }
+                                }
+                                Text { text: "Uhrzeit löschen"; font-size: 12px; color: Theme.ink;
+                                       vertical-alignment: center; }
+                            }
+                        }
+                        clicked => { due-opts-popup.close(); root.time-cleared(); }
+                    }
+                }
+            }
+        }
+    }
+    // opts-menu-open wird nicht mehr benötigt; popup per .show()/.close() gesteuert
 }
 
 // ─── DayColumn ────────────────────────────────────────────────────────────────
@@ -781,6 +850,8 @@ component DayColumn inherits Rectangle {
     callback task-drag-dropped();
     callback set-task-due(int, string);
     callback task-due-cleared(int, string);
+    callback task-time-cleared(int, string);
+    callback task-open-time-picker(int, string);
     callback start-editing(string);
     callback stop-editing();
     callback attach-image(int, string);
@@ -813,6 +884,7 @@ component DayColumn inherits Rectangle {
             drag-dropped   => { root.task-drag-dropped(); }
             set-due        => { root.set-task-due(root.col-index, task.id); }
             due-cleared    => { root.task-due-cleared(root.col-index, task.id); }
+            time-cleared   => { root.task-time-cleared(root.col-index, task.id); }
             renamed(t)         => { root.rename-task(root.col-index, task.id, t); }
             start-editing      => { root.start-editing(task.id); }
             stop-editing       => { root.stop-editing(); }
@@ -893,11 +965,13 @@ component DayColumn inherits Rectangle {
                 }
     }
 
-    // Past-day Overlay (letzte Deklaration = höchste Z-Order)
+    // Past-day Overlay
     if day.is-past && !DragState.active: Rectangle {
         x: 0; y: 0; width: parent.width; height: parent.height;
         background: #00000010;
     }
+
+
 }
 // ─── SomedayListCard ─────────────────────────────────────────────────────────
 
@@ -921,6 +995,7 @@ component SomedayListCard inherits Rectangle {
     callback someday-task-drag-dropped();
     callback set-someday-task-due(int, string);
     callback someday-due-cleared(int, string);   // list-idx, id
+    callback someday-time-cleared(int, string); // list-idx, id
     callback rename-list(int, string);
     callback delete-list(int);
     callback start-editing(string);
@@ -996,7 +1071,7 @@ component SomedayListCard inherits Rectangle {
                 width: 28px; height: 28px;
                 Rectangle {
                     border-radius: 4px;
-                    background: del-btn.has-hover ? #ff444433 : transparent;
+                    background: del-btn.has-hover ? #cc000088 : transparent;
                     animate background { duration: 60ms; }
                     Image { source: @image-url("../assets/icons/x.svg"); width: 16px; height: 16px;
                            horizontal-alignment: center; vertical-alignment: center; }
@@ -1144,6 +1219,7 @@ component SomedayListCard inherits Rectangle {
                     drag-dropped   => { root.someday-task-drag-dropped(); }
                     set-due        => { root.set-someday-task-due(root.list-index, task.id); }
                     due-cleared    => { root.someday-due-cleared(root.list-index, task.id); }
+                    time-cleared   => { root.someday-time-cleared(root.list-index, task.id); }
                     renamed(t)         => { root.rename-someday-task(root.list-index, task.id, t); }
                     start-editing      => { root.start-editing(task.id); }
                     stop-editing       => { root.stop-editing(); }
@@ -1229,13 +1305,21 @@ component GermanDatePicker inherits PopupWindow {
     callback accepted-with-time(int, int, int);  // day, month, year (→ TimePicker folgt)
     callback canceled();
 
-    in-out property <int> current-day:   1;
-    in-out property <int> current-month: 1;
-    in-out property <int> current-year:  2025;
+    in-out property <int>  current-day:    1;
+    in-out property <int>  current-month:  1;
+    in-out property <int>  current-year:   2025;
+    in property    <bool>  show-time-btn:  true;
+    // Heutiges Datum → vergangene Tage ausgrauen
+    in property    <int>   today-day:    1;
+    in property    <int>   today-month:  1;
+    in property    <int>   today-year:   2025;
 
     // Interner Navigationszustand (Monat der Kalenderanzeige)
     property <int> view-month: current-month;
     property <int> view-year:  current-year;
+
+    // view-month/year als reaktive Properties (nicht imperativ gesetzt)
+    // → reagieren automatisch auf current-month/year-Änderungen (da kein imperatives Override)
 
     // Hilfsfunktionen
     pure function month-name(m: int) -> string {
@@ -1255,18 +1339,24 @@ component GermanDatePicker inherits PopupWindow {
         m == 2  ? (Math.mod(y, 4) == 0 && (Math.mod(y, 100) != 0 || Math.mod(y, 400) == 0) ? 29 : 28) :
         m == 4 || m == 6 || m == 9 || m == 11 ? 30 : 31
     }
-    // Wochentag des 1. des Monats: 0=Mo … 6=So (Zeller's congruence, Math.mod statt %)
+    // Wochentag des 1. des Monats: 0=Mo … 6=So
+    // Tomohiko Sakamoto's algorithm – verifiziert für 1900–2099.
+    // Für Jan/Feb wird y um 1 reduziert (Monatsoffset-Tabelle).
     pure function first-weekday(m: int, y: int) -> int {
-        // m2 = m+12 wenn Jan/Feb, sonst m; y2 = y-1 wenn Jan/Feb, sonst y
+        // Tomohiko Sakamoto, vollständig inline (keine property in pure function)
+        // Monatsoffset: [0,3,2,5,0,3,5,1,4,6,2,4] für Jan..Dez
+        // y2 = y - 1 wenn m<3, sonst y
         Math.mod(
             Math.mod(
-                1
-                + (13 * ((m <= 2 ? m + 12 : m) + 1)) / 5
-                + Math.mod((m <= 2 ? y - 1 : y), 100)
-                + Math.mod((m <= 2 ? y - 1 : y), 100) / 4
-                + (m <= 2 ? y - 1 : y) / 400
-                - 2 * ((m <= 2 ? y - 1 : y) / 100),
-            7) + 5,
+                (m < 3 ? y - 1 : y)
+                + (m < 3 ? y - 1 : y) / 4
+                - (m < 3 ? y - 1 : y) / 100
+                + (m < 3 ? y - 1 : y) / 400
+                + (m == 1 ? 0 : m == 2 ? 3 : m == 3 ? 2 : m == 4 ? 5 :
+                   m == 5 ? 0 : m == 6 ? 3 : m == 7 ? 5 : m == 8 ? 1 :
+                   m == 9 ? 4 : m == 10 ? 6 : m == 11 ? 2 : 4)
+                + 1,
+            7) + 6,
         7)
     }
 
@@ -1341,23 +1431,31 @@ component GermanDatePicker inherits PopupWindow {
                         property <bool> is-sel:  valid && day-nr == current-day
                                                  && view-month == current-month
                                                  && view-year  == current-year;
+                        // Vergangener Tag: view-year < today, oder gleiche Jahr+Monat aber Tag < heute
+                        property <bool> is-past:
+                            valid && (
+                                view-year < root.today-year
+                                || (view-year == root.today-year && view-month < root.today-month)
+                                || (view-year == root.today-year && view-month == root.today-month && day-nr < root.today-day)
+                            );
                         Rectangle {
                             border-radius: 18px;
                             background: is-sel ? Theme.accent
-                                       : cal-cell.has-hover && valid ? Theme.hover-bg
+                                       : cal-cell.has-hover && valid && !is-past ? Theme.hover-bg
                                        : transparent;
                             Text {
                                 text: valid ? day-nr : "";
                                 font-size: 13px;
                                 font-weight: is-sel ? 700 : 400;
                                 color: is-sel ? Theme.today-ink
+                                             : is-past ? Theme.ink-ghost
                                              : valid ? Theme.ink : transparent;
                                 horizontal-alignment: center;
                                 vertical-alignment: center;
                             }
                         }
                         clicked => {
-                            if valid {
+                            if valid && !is-past {
                                 current-day   = day-nr;
                                 current-month = view-month;
                                 current-year  = view-year;
@@ -1371,7 +1469,7 @@ component GermanDatePicker inherits PopupWindow {
             HorizontalLayout {
                 alignment: end; spacing: 8px;
                 // Uhr-Button: Datum übernehmen + TimePicker öffnen
-                time-btn := TouchArea {
+                if root.show-time-btn: time-btn := TouchArea {
                     width: 36px; height: 34px;
                     Rectangle {
                         border-radius: 6px; border-width: 1px; border-color: Theme.border;
@@ -1398,7 +1496,7 @@ component GermanDatePicker inherits PopupWindow {
                     width: 60px; height: 34px;
                     Rectangle {
                         border-radius: 6px;
-                        background: ok-btn.has-hover ? Theme.accent.darker(10%) : Theme.accent;
+                        background: ok-btn.has-hover ? Theme.btn-accent-hover : Theme.accent;
                         Text { text: "OK"; font-size: 12px; font-weight: 700;
                                color: Theme.today-ink;
                                horizontal-alignment: center; vertical-alignment: center; }
@@ -1449,6 +1547,7 @@ export component AppWindow inherits Window {
 
     // ── Einstellungen ────────────────────────────────────────────────────────
     in-out property <bool>   settings-open: false;
+    in-out property <bool>   about-open:    false;
     in-out property <string> accent-hex:    "#1c1c1c";  // aktuell gewählte Akzentfarbe
     callback set-accent-color(string);  // hex → Rust speichert + setzt Theme
     callback reset-settings();          // alles auf Standard zurücksetzen
@@ -1480,8 +1579,15 @@ export component AppWindow inherits Window {
     in-out property <int> picker-day:    1;
     in-out property <int> picker-month:  1;
     in-out property <int> picker-year:   2025;
+    // Heutiges Datum für den Navigations-DatePicker
+    in-out property <int> today-day:     1;
+    in-out property <int> today-month:   1;
+    in-out property <int> today-year:    2025;
     in-out property <int> picker-hour:   9;
     in-out property <int> picker-minute: 0;
+    in-out property <bool> time-picker-open: false;
+    in-out property <int>  today-hour:   0;
+    in-out property <int>  today-minute: 0;
 
     out property <float> drag-target-col-f:
         max(0.0, min(6.0, DragState.cursor-x / self.width * 7.0));
@@ -1495,6 +1601,8 @@ export component AppWindow inherits Window {
     callback delete-task(int, string);
     callback navigate-week(int);
     callback navigate-today();
+    callback navigate-to-date(int, int, int);  // day, month, year
+    in-out property <bool> nav-picker-open: false;
     callback add-someday-task(int, string);
     callback toggle-someday-task(int, string);
     callback delete-someday-task(int, string);
@@ -1528,6 +1636,8 @@ export component AppWindow inherits Window {
     // due-cleared-for: von TaskRow über DayColumn/SomedayListCard; speichert editing-Kontext
     // und ruft dann due-cleared() auf (gleiche Rust-Logik wie bisher)
     callback due-cleared-for(int, int, string);  // col, list-idx, id
+    callback clear-time-for(int, int, string);   // nur Uhrzeit löschen
+    callback open-time-picker-for(int, int, string); // TimePicker direkt öffnen
 
     // ── Public functions (called from Rust via invoke_*) ──────────────────
     public function open-image-popup() {
@@ -1537,7 +1647,7 @@ export component AppWindow inherits Window {
         date-picker.show();
     }
     public function open-time-picker() {
-        time-picker.show();
+        root.time-picker-open = true;
     }
 
 
@@ -1557,53 +1667,87 @@ export component AppWindow inherits Window {
                     horizontal-stretch: 0; spacing: 4px; alignment: center;
                     Text { text: "TuDu"; font-size: 19px; font-weight: 700; letter-spacing: 0.5px;
                            color: Theme.today-ink; vertical-alignment: center; min-width: 60px; }
-                    HdrBtn { has-icon: true; enabled: root.can-undo; icon: @image-url("../assets/icons/undo-v2.svg"); tooltip: "Rückgängig"; clicked => { root.undo(); } }
-                    HdrBtn { has-icon: true; enabled: root.can-redo; icon: @image-url("../assets/icons/redo-v2.svg"); tooltip: "Wiederholen"; clicked => { root.redo(); } }
+                    HdrBtn { has-icon: true; enabled: root.can-undo; icon: @image-url("../assets/icons/undo.svg"); tooltip: "Rückgängig"; clicked => { root.undo(); } }
+                    HdrBtn { has-icon: true; enabled: root.can-redo; icon: @image-url("../assets/icons/redo.svg"); tooltip: "Wiederholen"; clicked => { root.redo(); } }
                 }
 
                 // ── Mitte: Wochennavigation ────────────────────────────────
+                // horizontal-stretch:1 → nimmt Mitte zwischen Links/Rechts ein.
+                // Pfeile + Datumsblock in fixem HorizontalLayout.
+                // Datumsblock hat explizite Breite → TouchArea + Rectangle funktionieren.
                 HorizontalLayout {
-                    horizontal-stretch: 0; spacing: 6px; alignment: center;
+                    horizontal-stretch: 1; spacing: 0px; alignment: center;
                     prev-btn := TouchArea {
-                        width: 30px; height: 54px;
-                        Rectangle { width: parent.width; height: parent.height;
-                            border-radius: 4px; background: prev-btn.has-hover ? Theme.btn-hover : transparent;
+                        width: 36px; height: 54px;
+                        Rectangle {
+                            x: (parent.width - 32px) / 2;
+                            y: (parent.height - 32px) / 2;
+                            width: 32px; height: 32px;
+                            border-radius: 6px;
+                            border-width: prev-btn.has-hover ? 1px : 0px;
+                            border-color: #ffffff50;
+                            background: prev-btn.has-hover ? Theme.hdr-btn-hover : transparent;
                             animate background { duration: 80ms; }
-                            Image { source: @image-url("../assets/icons/prev-white.svg"); width: 22px; height: 22px;
-                                   horizontal-alignment: center; vertical-alignment: center; } }
+                            animate border-width { duration: 80ms; }
+                            Image { source: @image-url("../assets/icons/prev-white.svg"); width: 20px; height: 20px;
+                                   horizontal-alignment: center; vertical-alignment: center; }
+                        }
                         clicked => { root.navigate-week(-1); }
                     }
+                    // Datumsblock: explizite Breite → Hover-Rectangle funktioniert
                     VerticalLayout {
-                        alignment: center; spacing: 2px;
-                        HorizontalLayout {
-                            spacing: 8px; alignment: center;
-                            Text { text: root.kw-label; color: Theme.today-ink; font-size: 12px;
-                                   letter-spacing: 0.5px; vertical-alignment: center; }
-                            Text { text: root.week-label; color: Theme.ink-ghost; font-size: 12px;
-                                   letter-spacing: 0.5px; vertical-alignment: center; min-width: 160px;
-                                   horizontal-alignment: center; }
+                        width: 230px; alignment: center; spacing: 2px;
+                        date-nav-ta := TouchArea {
+                            width: parent.width; height: 28px;
+                            Rectangle {
+                                width: parent.width; height: parent.height;
+                                border-radius: 5px;
+                                background: date-nav-ta.has-hover ? Theme.hdr-btn-hover : transparent;
+                                border-width: date-nav-ta.has-hover ? 1px : 0px;
+                                border-color: #ffffff50;
+                                animate background { duration: 80ms; }
+                                HorizontalLayout {
+                                    spacing: 8px; alignment: center;
+                                    padding-left: 6px; padding-right: 6px;
+                                    Text { text: root.kw-label; color: Theme.today-ink; font-size: 12px;
+                                           letter-spacing: 0.5px; vertical-alignment: center; }
+                                    Text { text: root.week-label; color: Theme.ink-ghost; font-size: 12px;
+                                           letter-spacing: 0.5px; vertical-alignment: center;
+                                           horizontal-alignment: center; }
+                                }
+                            }
+                            clicked => { root.nav-picker-open = true; }
                         }
                         today-ta := TouchArea {
-                            height: 18px;
+                            width: parent.width; height: 16px;
                             Rectangle {
                                 width: parent.width; height: parent.height;
                                 border-radius: 3px;
-                                background: today-ta.has-hover ? Theme.btn-hover : transparent;
+                                background: today-ta.has-hover ? Theme.hdr-btn-hover : transparent;
+                                border-width: today-ta.has-hover ? 1px : 0px;
+                                border-color: #ffffff50;
                                 animate background { duration: 80ms; }
                                 Text { text: "Heute"; font-size: 10px; color: Theme.ink-ghost;
-                                       horizontal-alignment: center; vertical-alignment: center;
-                                       width: parent.width; height: parent.height; }
+                                       horizontal-alignment: center; vertical-alignment: center; }
                             }
                             clicked => { root.navigate-today(); }
                         }
                     }
                     next-btn := TouchArea {
-                        width: 30px; height: 54px;
-                        Rectangle { width: parent.width; height: parent.height;
-                            border-radius: 4px; background: next-btn.has-hover ? Theme.btn-hover : transparent;
+                        width: 36px; height: 54px;
+                        Rectangle {
+                            x: (parent.width - 32px) / 2;
+                            y: (parent.height - 32px) / 2;
+                            width: 32px; height: 32px;
+                            border-radius: 6px;
+                            border-width: next-btn.has-hover ? 1px : 0px;
+                            border-color: #ffffff50;
+                            background: next-btn.has-hover ? Theme.hdr-btn-hover : transparent;
                             animate background { duration: 80ms; }
-                            Image { source: @image-url("../assets/icons/next-white.svg"); width: 22px; height: 22px;
-                                   horizontal-alignment: center; vertical-alignment: center; } }
+                            animate border-width { duration: 80ms; }
+                            Image { source: @image-url("../assets/icons/next-white.svg"); width: 20px; height: 20px;
+                                   horizontal-alignment: center; vertical-alignment: center; }
+                        }
                         clicked => { root.navigate-week(1); }
                     }
                 }
@@ -1614,6 +1758,7 @@ export component AppWindow inherits Window {
                     HdrBtn { has-icon: true; icon: root.hide-done ? @image-url("../assets/icons/eye-off-white.svg") : @image-url("../assets/icons/eye-white.svg"); tooltip: root.hide-done ? "Erledigte einblenden" : "Erledigte ausblenden"; active: root.hide-done; clicked => { root.toggle-hide-done(); } }
                     HdrBtn { has-icon: true; icon: @image-url("../assets/icons/trash-white.svg"); tooltip: "Erledigte löschen"; clicked => { root.delete-all-done(); } }
                     HdrBtn { has-icon: true; icon: @image-url("../assets/icons/settings-white.svg"); tooltip: "Einstellungen"; clicked => { root.settings-open = true; } }
+                    HdrBtn { label: "i"; tooltip: "Über TuDu"; clicked => { root.about-open = true; } }
                     HdrBtn { has-icon: true; icon: @image-url("../assets/icons/power-white.svg"); tooltip: "Beenden"; clicked => { root.editing-task-id = ""; root.editing-list-idx = -1; root.quit-app(); } }
                 }
             }
@@ -1680,7 +1825,9 @@ export component AppWindow inherits Window {
                             rename-task(idx, id, t) => { root.rename-task(idx, -1, id, t); }
                             task-drag-dropped       => { root.task-drag-dropped(); }
                             set-task-due(idx, id)   => { root.set-task-due(idx, -1, id); }
-                            task-due-cleared(idx, id) => { root.due-cleared-for(idx, -1, id); }
+                            task-due-cleared(idx, id)  => { root.due-cleared-for(idx, -1, id); }
+                            task-time-cleared(idx, id)     => { root.clear-time-for(idx, -1, id); }
+                            task-open-time-picker(idx, id) => { root.open-time-picker-for(idx, -1, id); }
                             start-editing(id)       => {
                                 root.editing-task-id = id;
                                 root.hovered-task-col = col-idx;
@@ -1770,6 +1917,7 @@ export component AppWindow inherits Window {
                             someday-task-drag-dropped       => { root.someday-task-drag-dropped(); }
                             set-someday-task-due(idx, id)   => { root.set-task-due(-1, idx, id); }
                             someday-due-cleared(idx, id)    => { root.due-cleared-for(-1, idx, id); }
+                            someday-time-cleared(idx, id)   => { root.clear-time-for(-1, idx, id); }
                             rename-list(idx, t)             => { root.rename-someday-list(idx, t); }
                             delete-list(idx)                => { root.delete-someday-list(idx); }
                             list-drag-dropped               => { root.reorder-someday-list(ListDragState.source-idx, ListDragState.target-idx); }
@@ -1838,13 +1986,19 @@ export component AppWindow inherits Window {
             drop-shadow-blur: 20px; drop-shadow-offset-x: 0px; drop-shadow-offset-y: 6px;
             drop-shadow-color: #00000022;
             HorizontalLayout {
-                padding-left: 10px; padding-right: 10px; spacing: 8px; alignment: center;
+                padding-left: 10px; padding-right: 10px; spacing: 8px;
+                // Äußerer Container streckt sich vertikal → innerer Kreis kann zentriert werden
                 Rectangle {
-                    width: 13px; height: 13px; border-radius: 3px; border-width: 1.5px;
-                    border-color: DragState.task-done ? Theme.accent : Theme.ink-ghost;
-                    background: DragState.task-done ? Theme.accent : transparent;
-                    Image { source: @image-url("../assets/icons/check.svg"); visible: DragState.task-done; width: 8px; height: 8px;
-                           horizontal-alignment: center; vertical-alignment: center; }
+                    width: 13px; horizontal-stretch: 0;
+                    Rectangle {
+                        width: 13px; height: 13px;
+                        y: (parent.height - 13px) / 2;
+                        border-radius: 6.5px; border-width: 1.5px;
+                        border-color: DragState.task-done ? Theme.accent : Theme.ink-ghost;
+                        background: transparent;
+                        Image { source: @image-url("../assets/icons/check.svg"); visible: DragState.task-done; width: 8px; height: 8px;
+                               horizontal-alignment: center; vertical-alignment: center; }
+                    }
                 }
                 Text { text: DragState.task-text; font-size: 13px; overflow: elide;
                        vertical-alignment: center;
@@ -1918,7 +2072,7 @@ export component AppWindow inherits Window {
                                 width: 36px; height: 36px;
                                 Rectangle {
                                     border-radius: 5px;
-                                    background: close-img-btn.has-hover ? Theme.btn-hover : transparent;
+                                    background: close-img-btn.has-hover ? #cc000088 : transparent;
                                     animate background { duration: 60ms; }
                                     Image { source: @image-url("../assets/icons/x.svg"); width: 20px; height: 20px;
                                            horizontal-alignment: center; vertical-alignment: center; }
@@ -1943,6 +2097,9 @@ export component AppWindow inherits Window {
         current-day:   root.picker-day;
         current-month: root.picker-month;
         current-year:  root.picker-year;
+        today-day:     root.today-day;
+        today-month:   root.today-month;
+        today-year:    root.today-year;
         // OK: nur Datum übernehmen, kein TimePicker
         accepted(d, m, y) => {
             root.due-date-only(d, m, y);
@@ -1952,25 +2109,309 @@ export component AppWindow inherits Window {
             root.picker-day   = d;
             root.picker-month = m;
             root.picker-year  = y;
-            time-picker.show();
+            root.time-picker-open = true;
         }
         canceled => { }
     }
 
-    // ── Eigener TimePicker mit führenden Nullen ──────────────────────────
-    time-picker := TimePickerPopup {
-        width: 360px; height: 480px;
-        close-policy: no-auto-close;
-        use-24-hour-format: true;
-        time: { hour: root.picker-hour, minute: root.picker-minute };
-        accepted(time) => {
-            root.due-complete(root.picker-day, root.picker-month, root.picker-year,
-                              time.hour, time.minute);
-            time-picker.close();
-        }
-        canceled => {
-            root.due-date-only(root.picker-day, root.picker-month, root.picker-year);
-            time-picker.close();
+    // ── Eigener TimePicker (if-Overlay, gleicher Stil wie alle Dialoge) ────
+
+    // ── Eigener TimePicker als if-Overlay ──────────────────────────────────
+    if root.time-picker-open: Rectangle {
+        x: 0; y: 0; width: root.width; height: root.height;
+        z: 9200; background: #00000055;
+
+        tp-card := Rectangle {
+            x: (parent.width  - self.width)  / 2;
+            y: (parent.height - self.height) / 2;
+            width: 280px;
+            height: tp-vl.preferred-height;
+            background: Theme.surface;
+            border-radius: 12px;
+            border-width: 1px; border-color: Theme.border;
+            drop-shadow-blur: 40px; drop-shadow-offset-y: 8px;
+            drop-shadow-color: #00000033;
+
+            // Liegt die gewählte Uhrzeit in der Vergangenheit?
+            // Nur relevant wenn picker-date == heute
+            property <bool> tp-same-day:
+                root.picker-day == root.today-day
+                && root.picker-month == root.today-month
+                && root.picker-year == root.today-year;
+            property <int>  tp-now-hour:   root.today-hour;
+            property <int>  tp-now-minute: root.today-minute;
+            property <bool> tp-in-past:
+                tp-same-day && (
+                    root.picker-hour < tp-now-hour
+                    || (root.picker-hour == tp-now-hour && root.picker-minute <= tp-now-minute)
+                );
+
+            tp-vl := VerticalLayout {
+                // ── Kopfzeile ────────────────────────────────────────────
+                Rectangle {
+                    height: 48px; background: Theme.hdr-bg; border-radius: 12px;
+                    HorizontalLayout {
+                        padding-left: 20px; padding-right: 8px;
+                        Text { text: "Uhrzeit wählen"; color: Theme.today-ink;
+                               font-size: 13px; font-weight: 700;
+                               vertical-alignment: center; horizontal-stretch: 1; }
+                        tp-close := TouchArea {
+                            width: 40px; height: 48px;
+                            Rectangle {
+                                border-radius: 5px;
+                                background: tp-close.has-hover ? #cc000088 : transparent;
+                                animate background { duration: 80ms; }
+                                Text { text: "×"; font-size: 20px; color: Theme.today-ink;
+                                       horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                            clicked => { root.time-picker-open = false;
+                                         root.due-date-only(root.picker-day, root.picker-month, root.picker-year); }
+                        }
+                    }
+                }
+
+                // ── Uhrenanzeige: Spinner + TextInput + Mausrad ─────────
+                VerticalLayout {
+                    padding: 24px; spacing: 20px; alignment: center;
+
+                    HorizontalLayout {
+                        spacing: 0px; alignment: center;
+
+                        // ── Stunden ──────────────────────────────────────
+                        VerticalLayout {
+                            spacing: 6px; alignment: center;
+                            tp-hour-up := TouchArea {
+                                width: 60px; height: 32px;
+                                Rectangle {
+                                    border-radius: 6px;
+                                    background: tp-hour-up.has-hover ? Theme.hover-bg : transparent;
+                                    animate background { duration: 60ms; }
+                                    Text { text: "▲"; font-size: 14px; color: Theme.ink-muted;
+                                           horizontal-alignment: center; vertical-alignment: center; }
+                                }
+                                clicked => { root.picker-hour = Math.mod(root.picker-hour + 1, 24); }
+                            }
+                            // Eingabefeld: Mausrad + Direkteingabe
+                            tp-hour-ta := TouchArea {
+                                width: 60px; height: 56px;
+                                scroll-event(e) => {
+                                    if e.delta-y > 0px {
+                                        root.picker-hour = Math.mod(root.picker-hour + 1, 24);
+                                    } else {
+                                        root.picker-hour = Math.mod(root.picker-hour + 23, 24);
+                                    }
+                                    accept
+                                }
+                                Rectangle {
+                                    border-radius: 8px; border-width: 1px;
+                                    border-color: tp-hour-inp.has-focus ? Theme.accent : Theme.border;
+                                    background: Theme.hover-bg;
+                                    animate border-color { duration: 80ms; }
+                                    tp-hour-inp := TextInput {
+                                        width: parent.width - 8px; height: parent.height;
+                                        x: 4px;
+                                        font-size: 32px; font-weight: 700; color: Theme.ink;
+                                        horizontal-alignment: center; vertical-alignment: center;
+                                        single-line: true;
+                                        input-type: number;
+                                        text: root.picker-hour < 10 ? "0" + root.picker-hour : "" + root.picker-hour;
+                                        // Nur Ziffern erlauben; accept = Zeichen wird NICHT eingefügt
+                                        key-pressed(e) => {
+                                            if (e.text >= "0" && e.text <= "9") { reject }
+                                            else if (e.text == Key.Backspace || e.text == Key.Delete) { reject }
+                                            else if (e.text == Key.Return) {
+                                                root.picker-hour = self.text.to-float() > 23 ? 23 : self.text.to-float();
+                                                self.text = root.picker-hour < 10 ? "0" + root.picker-hour : "" + root.picker-hour;
+                                                tp-min-inp.focus();
+                                                accept
+                                            } else { accept }
+                                        }
+                                        // Live-Validierung nach jedem Tastendruck
+                                        edited => {
+                                            // Mehr als 2 Zeichen: auf Maximum begrenzen
+                                            if self.text.character-count > 2 {
+                                                self.text = "23";
+                                            }
+                                            // Wert > 23: auf 23 begrenzen
+                                            if self.text.to-float() > 23 {
+                                                self.text = "23";
+                                            }
+                                            // Erstes Zeichen > 2: führende 0 + Auto-Weiter
+                                            if (self.text.character-count == 1 && self.text.to-float() > 2) {
+                                                root.picker-hour = self.text.to-float();
+                                                self.text = "0" + root.picker-hour;
+                                                tp-min-inp.focus();
+                                            }
+                                            // Zwei Zeichen: Stunde setzen + Auto-Weiter
+                                            if self.text.character-count == 2 {
+                                                root.picker-hour = self.text.to-float();
+                                                tp-min-inp.focus();
+                                            }
+                                        }
+                                        changed has-focus => {
+                                            if !self.has-focus {
+                                                root.picker-hour = self.text.to-float() > 23 ? 23 : self.text.to-float();
+                                                self.text = root.picker-hour < 10 ? "0" + root.picker-hour : "" + root.picker-hour;
+                                            } else {
+                                                self.select-all();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            tp-hour-dn := TouchArea {
+                                width: 60px; height: 32px;
+                                Rectangle {
+                                    border-radius: 6px;
+                                    background: tp-hour-dn.has-hover ? Theme.hover-bg : transparent;
+                                    animate background { duration: 60ms; }
+                                    Text { text: "▼"; font-size: 14px; color: Theme.ink-muted;
+                                           horizontal-alignment: center; vertical-alignment: center; }
+                                }
+                                clicked => { root.picker-hour = Math.mod(root.picker-hour + 23, 24); }
+                            }
+                        }
+
+                        // Doppelpunkt
+                        Text { text: ":"; font-size: 36px; font-weight: 700; color: Theme.ink;
+                               vertical-alignment: center; width: 20px; horizontal-alignment: center; }
+
+                        // ── Minuten ──────────────────────────────────────
+                        VerticalLayout {
+                            spacing: 6px; alignment: center;
+                            tp-min-up := TouchArea {
+                                width: 60px; height: 32px;
+                                Rectangle {
+                                    border-radius: 6px;
+                                    background: tp-min-up.has-hover ? Theme.hover-bg : transparent;
+                                    animate background { duration: 60ms; }
+                                    Text { text: "▲"; font-size: 14px; color: Theme.ink-muted;
+                                           horizontal-alignment: center; vertical-alignment: center; }
+                                }
+                                clicked => { root.picker-minute = Math.mod(root.picker-minute + 1, 60); }
+                            }
+                            tp-min-ta := TouchArea {
+                                width: 60px; height: 56px;
+                                scroll-event(e) => {
+                                    if e.delta-y > 0px {
+                                        root.picker-minute = Math.mod(root.picker-minute + 1, 60);
+                                    } else {
+                                        root.picker-minute = Math.mod(root.picker-minute + 59, 60);
+                                    }
+                                    accept
+                                }
+                                Rectangle {
+                                    border-radius: 8px; border-width: 1px;
+                                    border-color: tp-min-inp.has-focus ? Theme.accent : Theme.border;
+                                    background: Theme.hover-bg;
+                                    animate border-color { duration: 80ms; }
+                                    tp-min-inp := TextInput {
+                                        width: parent.width - 8px; height: parent.height;
+                                        x: 4px;
+                                        font-size: 32px; font-weight: 700; color: Theme.ink;
+                                        horizontal-alignment: center; vertical-alignment: center;
+                                        single-line: true;
+                                        input-type: number;
+                                        text: root.picker-minute < 10 ? "0" + root.picker-minute : "" + root.picker-minute;
+                                        key-pressed(e) => {
+                                            if (e.text >= "0" && e.text <= "9") { reject }
+                                            else if (e.text == Key.Backspace || e.text == Key.Delete) { reject }
+                                            else if (e.text == Key.Return) {
+                                                root.picker-minute = self.text.to-float() > 59 ? 59 : self.text.to-float();
+                                                self.text = root.picker-minute < 10 ? "0" + root.picker-minute : "" + root.picker-minute;
+                                                accept
+                                            } else { accept }
+                                        }
+                                        edited => {
+                                            if self.text.character-count > 2 {
+                                                self.text = "59";
+                                            }
+                                            if self.text.to-float() > 59 {
+                                                self.text = "59";
+                                            }
+                                            // Erstes Zeichen > 5: führende 0 einfügen (z.B. "7" → "07")
+                                            if (self.text.character-count == 1 && self.text.to-float() > 5) {
+                                                root.picker-minute = self.text.to-float();
+                                                self.text = "0" + root.picker-minute;
+                                            }
+                                            if self.text.character-count == 2 {
+                                                root.picker-minute = self.text.to-float();
+                                            }
+                                        }
+                                        changed has-focus => {
+                                            if !self.has-focus {
+                                                root.picker-minute = self.text.to-float() > 59 ? 59 : self.text.to-float();
+                                                self.text = root.picker-minute < 10 ? "0" + root.picker-minute : "" + root.picker-minute;
+                                            } else {
+                                                self.select-all();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            tp-min-dn := TouchArea {
+                                width: 60px; height: 32px;
+                                Rectangle {
+                                    border-radius: 6px;
+                                    background: tp-min-dn.has-hover ? Theme.hover-bg : transparent;
+                                    animate background { duration: 60ms; }
+                                    Text { text: "▼"; font-size: 14px; color: Theme.ink-muted;
+                                           horizontal-alignment: center; vertical-alignment: center; }
+                                }
+                                clicked => { root.picker-minute = Math.mod(root.picker-minute + 59, 60); }
+                            }
+                        }
+                    }
+
+                    // ── Warnung: Vergangenheit (immer gleiche Höhe → kein Resize) ─
+                    Rectangle {
+                        height: 18px;
+                        Text {
+                            text: tp-in-past ? "⚠ Uhrzeit liegt in der Vergangenheit" : "";
+                            font-size: 11px; color: Theme.due-over;
+                            horizontal-alignment: center; vertical-alignment: center;
+                            width: parent.width;
+                        }
+                    }
+
+                    // ── Buttons ───────────────────────────────────────────
+                    HorizontalLayout {
+                        spacing: 8px; alignment: end;
+                        tp-cancel := TouchArea {
+                            width: 80px; height: 34px;
+                            Rectangle {
+                                border-radius: 6px; border-width: 1px; border-color: Theme.border;
+                                background: tp-cancel.has-hover ? Theme.hover-bg : transparent;
+                                animate background { duration: 80ms; }
+                                Text { text: "Abbrechen"; font-size: 12px; color: Theme.ink;
+                                       horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                            clicked => {
+                                root.time-picker-open = false;
+                                // Nichts ändern – bisherige Uhrzeit bleibt erhalten
+                            }
+                        }
+                        tp-ok := TouchArea {
+                            width: 60px; height: 34px;
+                            enabled: !tp-in-past;
+                            Rectangle {
+                                border-radius: 6px;
+                                background: tp-in-past ? #888888
+                                    : tp-ok.has-hover ? Theme.btn-accent-hover : Theme.accent;
+                                animate background { duration: 80ms; }
+                                Text { text: "OK"; font-size: 12px; font-weight: 700;
+                                       color: tp-in-past ? #cccccc : Theme.today-ink;
+                                       horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                            clicked => {
+                                root.time-picker-open = false;
+                                root.due-complete(root.picker-day, root.picker-month, root.picker-year,
+                                                  root.picker-hour, root.picker-minute);
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -2009,7 +2450,7 @@ export component AppWindow inherits Window {
                             width: 40px; height: 48px;
                             Rectangle {
                                 border-radius: 5px;
-                                background: close-btn.has-hover ? Theme.hdr-btn-hover : transparent;
+                                background: close-btn.has-hover ? #cc000088 : transparent;
                                 animate background { duration: 80ms; }
                                 Text { text: "×"; font-size: 20px; color: Theme.today-ink;
                                        horizontal-alignment: center; vertical-alignment: center; }
@@ -2106,12 +2547,259 @@ export component AppWindow inherits Window {
                             background: reset-ta.has-hover ? #fef2f2 : Theme.surface;
                             animate border-color { duration: 80ms; }
                             animate background   { duration: 80ms; }
-                            Text { text: "Standardwerte zurücksetzen";
+                            Text { text: "Standardwerte wiederherstellen";
                                    font-size: 12px;
                                    color: reset-ta.has-hover ? #dc2626 : Theme.ink-muted;
                                    horizontal-alignment: center; vertical-alignment: center; }
                         }
                         clicked => { root.reset-settings(); }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Navigations-DatePicker als Overlay ─────────────────────────────────────
+    // Als if-Block statt PopupWindow: wird bei jedem Öffnen neu erzeugt →
+    // view-month/year starten immer beim heutigen Datum. Kein Reset-Problem.
+    if root.nav-picker-open: Rectangle {
+        x: 0; y: 0; width: root.width; height: root.height;
+        z: 8000; background: transparent;
+        // Klick außerhalb → schließen
+        nav-backdrop := TouchArea { clicked => { root.nav-picker-open = false; } }
+
+        // Picker-Karte: zentriert horizontal, direkt unter dem Header
+        Rectangle {
+            x: (parent.width - 320px) / 2;
+            y: 58px;
+            width: 320px;
+            height: nav-picker-vl.preferred-height;
+            background: Theme.surface;
+            border-radius: 12px;
+            border-width: 1px; border-color: Theme.border;
+            drop-shadow-blur: 24px; drop-shadow-offset-y: 8px; drop-shadow-color: #00000022;
+
+            // Interne Navigation
+            property <int> nav-vm: root.today-month;
+            property <int> nav-vy: root.today-year;
+            property <int> nav-sel-d: root.today-day;
+            property <int> nav-sel-m: root.today-month;
+            property <int> nav-sel-y: root.today-year;
+
+            // Hilfsfunktionen (identisch zu GermanDatePicker)
+            pure function month-name(m: int) -> string {
+                m == 1 ? "Januar" : m == 2 ? "Februar" : m == 3 ? "März" :
+                m == 4 ? "April"  : m == 5 ? "Mai"     : m == 6 ? "Juni" :
+                m == 7 ? "Juli"   : m == 8 ? "August"  : m == 9 ? "September" :
+                m == 10 ? "Oktober" : m == 11 ? "November" : "Dezember"
+            }
+            pure function days-in-month(m: int, y: int) -> int {
+                m == 2 ? (Math.mod(y,4)==0 && (Math.mod(y,100)!=0 || Math.mod(y,400)==0) ? 29 : 28) :
+                m==4||m==6||m==9||m==11 ? 30 : 31
+            }
+            pure function first-wd(m: int, y: int) -> int {
+                Math.mod(
+                    Math.mod(
+                        (m < 3 ? y - 1 : y)
+                        + (m < 3 ? y - 1 : y)/4
+                        - (m < 3 ? y - 1 : y)/100
+                        + (m < 3 ? y - 1 : y)/400
+                        + (m==1?0:m==2?3:m==3?2:m==4?5:m==5?0:m==6?3:m==7?5:m==8?1:m==9?4:m==10?6:m==11?2:4)
+                        + 1,
+                    7) + 6,
+                7)
+            }
+
+            nav-picker-vl := VerticalLayout {
+                padding: 16px; spacing: 8px;
+                // Kopfzeile
+                HorizontalLayout {
+                    alignment: space-between;
+                    np-prev := TouchArea {
+                        width: 32px; height: 32px;
+                        Rectangle { border-radius: 6px; background: np-prev.has-hover ? Theme.hover-bg : transparent;
+                            Image { source: @image-url("../assets/icons/prev.svg"); width: 20px; height: 20px;
+                                   horizontal-alignment: center; vertical-alignment: center; } }
+                        clicked => {
+                            if nav-vm == 1 { nav-vm = 12; nav-vy -= 1; }
+                            else { nav-vm -= 1; }
+                        }
+                    }
+                    Text { text: month-name(nav-vm) + " " + nav-vy; font-size: 15px; font-weight: 700;
+                           color: Theme.ink; horizontal-alignment: center; vertical-alignment: center; }
+                    np-next := TouchArea {
+                        width: 32px; height: 32px;
+                        Rectangle { border-radius: 6px; background: np-next.has-hover ? Theme.hover-bg : transparent;
+                            Image { source: @image-url("../assets/icons/next.svg"); width: 20px; height: 20px;
+                                   horizontal-alignment: center; vertical-alignment: center; } }
+                        clicked => {
+                            if nav-vm == 12 { nav-vm = 1; nav-vy += 1; }
+                            else { nav-vm += 1; }
+                        }
+                    }
+                }
+                // Wochentag-Köpfe
+                HorizontalLayout {
+                    for dow in ["Mo","Di","Mi","Do","Fr","Sa","So"]: Text {
+                        text: dow; font-size: 11px; font-weight: 700;
+                        color: Theme.ink-ghost; horizontal-alignment: center;
+                        width: (320px - 32px) / 7;
+                    }
+                }
+                // Kalender-Gitter
+                property <int> fwd: first-wd(nav-vm, nav-vy);
+                property <int> dim: days-in-month(nav-vm, nav-vy);
+                VerticalLayout {
+                    spacing: 2px;
+                    for week in [0,1,2,3,4,5]: HorizontalLayout {
+                        for col in [0,1,2,3,4,5,6]: np-cell := TouchArea {
+                            width: (320px - 32px) / 7; height: 36px;
+                            property <int> nr: week * 7 + col - fwd + 1;
+                            property <bool> valid: nr >= 1 && nr <= dim;
+                            property <bool> is-sel: valid && nr == nav-sel-d
+                                                    && nav-vm == nav-sel-m
+                                                    && nav-vy == nav-sel-y;
+                            Rectangle {
+                                border-radius: 18px;
+                                background: is-sel ? Theme.accent
+                                           : np-cell.has-hover && valid ? Theme.hover-bg
+                                           : transparent;
+                                Text { text: valid ? nr : ""; font-size: 13px;
+                                       font-weight: is-sel ? 700 : 400;
+                                       color: is-sel ? Theme.today-ink : valid ? Theme.ink : transparent;
+                                       horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                            clicked => {
+                                if valid {
+                                    nav-sel-d = nr; nav-sel-m = nav-vm; nav-sel-y = nav-vy;
+                                }
+                            }
+                        }
+                    }
+                }
+                // Buttons
+                HorizontalLayout {
+                    alignment: end; spacing: 8px;
+                    np-cancel := TouchArea {
+                        width: 80px; height: 34px;
+                        Rectangle { border-radius: 6px; border-width: 1px; border-color: Theme.border;
+                            background: np-cancel.has-hover ? Theme.hover-bg : transparent;
+                            Text { text: "Abbrechen"; font-size: 12px; color: Theme.ink;
+                                   horizontal-alignment: center; vertical-alignment: center; } }
+                        clicked => { root.nav-picker-open = false; }
+                    }
+                    np-ok := TouchArea {
+                        width: 60px; height: 34px;
+                        Rectangle { border-radius: 6px;
+                            background: np-ok.has-hover ? Theme.btn-accent-hover : Theme.accent;
+                            Text { text: "OK"; font-size: 12px; font-weight: 700; color: Theme.today-ink;
+                                   horizontal-alignment: center; vertical-alignment: center; } }
+                        clicked => {
+                            root.navigate-to-date(nav-sel-d, nav-sel-m, nav-sel-y);
+                            root.nav-picker-open = false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Über-Dialog ─────────────────────────────────────────────────────────
+    if root.about-open: Rectangle {
+        x: 0; y: 0; width: root.width; height: root.height;
+        z: 9100; background: #00000055;
+
+        about-card := Rectangle {
+            x: (parent.width  - self.width)  / 2;
+            y: (parent.height - self.height) / 2;
+            width: 380px;
+            height: about-vl.preferred-height;
+            background: Theme.surface;
+            border-radius: 12px;
+            border-width: 1px; border-color: Theme.border;
+            drop-shadow-blur: 40px; drop-shadow-offset-y: 8px;
+            drop-shadow-color: #00000033;
+
+            about-vl := VerticalLayout {
+                // ── Kopfzeile ────────────────────────────────────────
+                Rectangle {
+                    height: 48px; background: Theme.hdr-bg;
+                    border-radius: 12px;
+                    HorizontalLayout {
+                        padding-left: 20px; padding-right: 8px;
+                        Text { text: "Über TuDu"; color: Theme.today-ink;
+                               font-size: 13px; font-weight: 700;
+                               vertical-alignment: center; horizontal-stretch: 1; }
+                        about-close-btn := TouchArea {
+                            width: 40px; height: 48px;
+                            Rectangle {
+                                border-radius: 5px;
+                                background: about-close-btn.has-hover ? #cc000088 : transparent;
+                                animate background { duration: 80ms; }
+                                Text { text: "×"; font-size: 20px; color: Theme.today-ink;
+                                       horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                            clicked => { root.about-open = false; }
+                        }
+                    }
+                }
+
+                // ── Inhalt ───────────────────────────────────────────
+                VerticalLayout {
+                    padding: 28px; spacing: 16px; alignment: center;
+
+                    // Icon + Name
+                    HorizontalLayout {
+                        spacing: 16px; alignment: center;
+                        Image {
+                            source: @image-url("../assets/icon.svg");
+                            width: 64px; height: 64px;
+                        }
+                        VerticalLayout {
+                            spacing: 4px; alignment: center;
+                            Text { text: "TuDu"; font-size: 24px; font-weight: 700;
+                                   color: Theme.ink; }
+                            Text { text: "Version 1.0.0"; font-size: 13px;
+                                   color: Theme.ink-muted; }
+                        }
+                    }
+
+                    // Beschreibung
+                    Text {
+                        text: "Lokale Aufgabenverwaltung mit Wochenansicht.\nGebaut mit Rust und Slint.";
+                        font-size: 12px; color: Theme.ink-muted;
+                        horizontal-alignment: center; wrap: word-wrap;
+                    }
+
+                    Rectangle { height: 1px; background: Theme.border; }
+
+                    // Credits
+                    Text {
+                        text: "Vollständig per Vibecoding entstanden –\nkeine einzige Zeile Code wurde manuell geschrieben.";
+                        font-size: 11px; color: Theme.ink-ghost;
+                        horizontal-alignment: center; wrap: word-wrap;
+                    }
+
+                    Rectangle { height: 1px; background: Theme.border; }
+
+                    Text {
+                        text: "© 2026 Dirk Schramm";
+                        font-size: 11px; color: Theme.ink-muted;
+                        horizontal-alignment: center;
+                    }
+
+                    // Schließen-Button
+                    about-ok := TouchArea {
+                        height: 36px;
+                        Rectangle {
+                            border-radius: 6px;
+                            background: about-ok.has-hover ? Theme.btn-accent-hover : Theme.accent;
+                            animate background { duration: 80ms; }
+                            Text { text: "OK"; font-size: 13px; font-weight: 700;
+                                   color: Theme.today-ink;
+                                   horizontal-alignment: center; vertical-alignment: center; }
+                        }
+                        clicked => { root.about-open = false; }
                     }
                 }
             }
