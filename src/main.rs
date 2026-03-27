@@ -19,7 +19,6 @@ use std::{
 use uuid::Uuid;
 
 slint::include_modules!();
-
 // ─── Data structures ─────────────────────────────────────────────────────────
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -27,14 +26,12 @@ struct TaskRecord {
     id:       String,
     text:     String,
     done:     bool,
-    /// "DD.MM.YYYY"
-    #[serde(default)] due_date: Option<String>,
-    /// "HH:MM"
-    #[serde(default)] due_time: Option<String>,
-    /// Dateiname (ohne Pfad) in images/-Unterordner neben data.json
-    #[serde(default)] image_filename: Option<String>,
-    /// Hex-Farbe z.B. "#e74c3c", None = keine Farbe
-    #[serde(default)] color_hex: Option<String>,
+    #[serde(default)] due_date:        Option<String>,
+    #[serde(default)] due_time:        Option<String>,
+    #[serde(default)] image_filename:   Option<String>,  // legacy, migrated on load
+    #[serde(default)] image_filenames:  Vec<String>,
+    #[serde(default)] color_hex:       Option<String>,
+    #[serde(default)] note_text:       Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -54,14 +51,9 @@ struct AppData {
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 struct AppConfig {
-    data_file: Option<PathBuf>,
-    /// Unix-Timestamp (Sekunden) wann wir data.json zuletzt geschrieben haben.
-    /// None = noch nie geschrieben oder ältere Config-Version.
-    #[serde(default)]
-    last_saved_secs: Option<u64>,
-    /// Akzentfarbe als Hex-String, z.B. "#2563eb". None = Standard (#1c1c1c).
-    #[serde(default)]
-    accent_color: Option<String>,
+    data_file:        Option<PathBuf>,
+    #[serde(default)] last_saved_secs: Option<u64>,
+    #[serde(default)] accent_color:    Option<String>,
 }
 
 fn config_path() -> PathBuf {
@@ -95,10 +87,26 @@ fn default_data_file() -> PathBuf {
 }
 
 fn load_data(path: &PathBuf) -> AppData {
-    if path.exists() {
+    let mut data: AppData = if path.exists() {
         serde_json::from_str(&fs::read_to_string(path).unwrap_or_default())
             .unwrap_or_default()
-    } else { AppData::default() }
+    } else { AppData::default() };
+    // Migrate legacy image_filename to image_filenames
+    for tasks in data.day_tasks.values_mut() {
+        for t in tasks.iter_mut() {
+            if let Some(f) = t.image_filename.take() {
+                if !t.image_filenames.contains(&f) { t.image_filenames.push(f); }
+            }
+        }
+    }
+    for list in data.someday_lists.iter_mut() {
+        for t in list.tasks.iter_mut() {
+            if let Some(f) = t.image_filename.take() {
+                if !t.image_filenames.contains(&f) { t.image_filenames.push(f); }
+            }
+        }
+    }
+    data
 }
 
 fn save_data(data: &AppData, path: &PathBuf) {
@@ -264,7 +272,8 @@ fn slint_task(t: &TaskRecord) -> Task {
         due_time_label: SharedString::from(due_time_label(t).as_str()),
         due_overdue:    overdue,
         due_today:      today,
-        has_image:      t.image_filename.is_some(),
+        has_image:      !t.image_filenames.is_empty(),
+        has_note:       t.note_text.as_ref().map(|n: &String| !n.is_empty()).unwrap_or(false),
         color_hex:      SharedString::from(t.color_hex.as_deref().unwrap_or("")),
     }
 }
@@ -607,12 +616,12 @@ fn collect_referenced_images(data: &AppData) -> HashSet<String> {
     let mut refs = HashSet::new();
     for tasks in data.day_tasks.values() {
         for t in tasks {
-            if let Some(f) = &t.image_filename { refs.insert(f.clone()); }
+            refs.extend(t.image_filenames.iter().cloned());
         }
     }
     for list in &data.someday_lists {
         for t in &list.tasks {
-            if let Some(f) = &t.image_filename { refs.insert(f.clone()); }
+            refs.extend(t.image_filenames.iter().cloned());
         }
     }
     refs
@@ -1439,8 +1448,175 @@ fn main() -> Result<(), slint::PlatformError> {
         apply_due(&d_r, start, &fp_r, &cfg_r, &us_r, &low_r, &edit_r, date_str, None, &rf);
     }); }
 
+
+    // ── save-note: Notiztext speichern ────────────────────────────────────────
+    { let d_r    = Rc::clone(&app_data);
+      let off_r  = Rc::clone(&week_offset);
+      let fp_r   = Rc::clone(&data_file);
+      let cfg_r  = Rc::clone(&cfg);
+      let us_r   = Rc::clone(&undo_stack);
+      let low_r  = Rc::clone(&last_own_write);
+      let edit_r = Rc::clone(&editing);
+      let sn     = snapshot.clone();
+      let rf     = refresh.clone();
+      ui.on_save_note(move |text| {
+        if let Some((col, list_idx, task_id)) = edit_r.borrow().clone() {
+            let start = start_date(*off_r.borrow());
+            sn(d_r.borrow().clone());
+            let mut d = d_r.borrow_mut();
+            let task_opt: Option<&mut TaskRecord> = if col >= 0 {
+                let date = start + Duration::days(col as i64);
+                d.day_tasks.get_mut(&date_key(date)).and_then(|v| v.iter_mut().find(|t| t.id == task_id))
+            } else {
+                d.someday_lists.get_mut(list_idx as usize).and_then(|l| l.tasks.iter_mut().find(|t| t.id == task_id))
+            };
+            if let Some(t) = task_opt {
+                let note = text.to_string();
+                t.note_text = if note.trim().is_empty() { None } else { Some(note) };
+            }
+            save_and_record(&d, &fp_r.borrow(), &cfg_r, &us_r.borrow(), &low_r);
+            drop(d); rf();
+        }
+    }); }
+
+        
+    // ── open-time-picker-for: TimePicker direkt öffnen (Uhrzeit ändern) ────────
+    { let d_r    = Rc::clone(&app_data);
+      let off_r  = Rc::clone(&week_offset);
+      let ui_w   = ui.as_weak();
+      let edit_r = Rc::clone(&editing);
+      ui.on_open_time_picker_for(move |col, list_idx, task_id| {
+        let d     = d_r.borrow();
+        let start = start_date(*off_r.borrow());
+        let task: Option<TaskRecord> = if col >= 0 {
+            let date = start + Duration::days(col as i64);
+            d.day_tasks.get(&date_key(date))
+                .and_then(|v| v.iter().find(|t| t.id == task_id.as_str())).cloned()
+        } else {
+            d.someday_lists.get(list_idx as usize)
+                .and_then(|l| l.tasks.iter().find(|t| t.id == task_id.as_str())).cloned()
+        };
+        drop(d);
+        *edit_r.borrow_mut() = Some((col, list_idx, task_id.to_string()));
+        let ui = ui_w.unwrap();
+        // Pre-populate with existing date (required) and time
+        if let Some(ref t) = task {
+            if let Some(ref ds) = t.due_date {
+                let today = Local::now().date_naive();
+                let date = parse_date(ds).unwrap_or(today);
+                ui.set_picker_day(date.day() as i32);
+                ui.set_picker_month(date.month() as i32);
+                ui.set_picker_year(date.year() as i32);
+            }
+            if let Some(ref ts) = t.due_time {
+                let parts: Vec<&str> = ts.split(':').collect();
+                if parts.len() == 2 {
+                    ui.set_picker_hour(parts[0].parse().unwrap_or(9));
+                    ui.set_picker_minute(parts[1].parse().unwrap_or(0));
+                }
+            }
+        }
+        ui.set_time_picker_open(true);
+    }); }
+
+    // ── clear-time-for: nur Uhrzeit löschen, Datum behalten ──────────────────
+    { let d_r    = Rc::clone(&app_data);
+      let off_r  = Rc::clone(&week_offset);
+      let fp_r   = Rc::clone(&data_file);
+      let cfg_r  = Rc::clone(&cfg);
+      let us_r   = Rc::clone(&undo_stack);
+      let low_r  = Rc::clone(&last_own_write);
+      let edit_r = Rc::clone(&editing);
+      let rf     = refresh.clone();
+      ui.on_clear_time_for(move |col, list_idx, task_id| {
+        // Genau wie due_cleared_for, aber Datum aus Task auslesen + Zeit = None
+        *edit_r.borrow_mut() = Some((col, list_idx, task_id.to_string()));
+        let start = start_date(*off_r.borrow());
+        let date_str = {
+            let d = d_r.borrow();
+            let task_opt: Option<&TaskRecord> = if col >= 0 {
+                let date = start + Duration::days(col as i64);
+                d.day_tasks.get(&date_key(date))
+                    .and_then(|v| v.iter().find(|t| t.id == task_id.as_str()))
+            } else {
+                d.someday_lists.get(list_idx as usize)
+                    .and_then(|l| l.tasks.iter().find(|t| t.id == task_id.as_str()))
+            };
+            task_opt.and_then(|t| t.due_date.clone())
+        };
+        apply_due(&d_r, start, &fp_r, &cfg_r, &us_r, &low_r, &edit_r, date_str, None, &rf);
+    }); }
+
+        // ── open-note: Notizfenster öffnen ──────────────────────────────────────────
+    { let d_r    = Rc::clone(&app_data);
+      let off_r  = Rc::clone(&week_offset);
+      let fp_r   = Rc::clone(&data_file);
+      let edit_r = Rc::clone(&editing);
+      let ui_w   = ui.as_weak();
+      ui.on_open_note(move |col, list_idx, task_id| {
+        *edit_r.borrow_mut() = Some((col, list_idx, task_id.to_string()));
+        let d     = d_r.borrow();
+        let start = start_date(*off_r.borrow());
+        let task: Option<&TaskRecord> = if col >= 0 {
+            let date = start + Duration::days(col as i64);
+            d.day_tasks.get(&date_key(date)).and_then(|v| v.iter().find(|t| t.id == task_id.as_str()))
+        } else {
+            d.someday_lists.get(list_idx as usize).and_then(|l| l.tasks.iter().find(|t| t.id == task_id.as_str()))
+        };
+        let note = task.and_then(|t| t.note_text.clone()).unwrap_or_default();
+        let ui = ui_w.unwrap();
+        ui.set_note_editor_text(SharedString::from(note.as_str()));
+        ui.set_popup_image_col(col);
+        ui.set_popup_image_list_idx(list_idx);
+        ui.set_popup_image_task_id(SharedString::from(task_id.as_str()));
+        // Load all thumbnails for this task
+        let imgs_dir = images_dir(&fp_r.borrow());
+        let fnames_vec: Vec<String> = task.map(|t| t.image_filenames.clone()).unwrap_or_default();
+        let thumbs: Vec<slint::Image> = fnames_vec.iter()
+            .filter_map(|fname| slint::Image::load_from_path(&imgs_dir.join(fname)).ok())
+            .collect();
+        let fnames_slint: Vec<slint::SharedString> = fnames_vec.iter()
+            .map(|f| slint::SharedString::from(f.as_str()))
+            .collect();
+        ui.set_popup_thumbnails(slint::ModelRc::new(slint::VecModel::from(thumbs)));
+        ui.set_popup_thumbnail_filenames(slint::ModelRc::new(slint::VecModel::from(fnames_slint)));
+        ui.set_popup_image(slint::Image::default());
+        ui.set_note_editor_open(true);
+    }); }
+
+    // ── save-note: Notiztext speichern ────────────────────────────────────────
+    { let d_r    = Rc::clone(&app_data);
+      let off_r  = Rc::clone(&week_offset);
+      let fp_r   = Rc::clone(&data_file);
+      let cfg_r  = Rc::clone(&cfg);
+      let us_r   = Rc::clone(&undo_stack);
+      let low_r  = Rc::clone(&last_own_write);
+      let edit_r = Rc::clone(&editing);
+      let sn     = snapshot.clone();
+      let rf     = refresh.clone();
+      ui.on_save_note(move |text| {
+        if let Some((col, list_idx, task_id)) = edit_r.borrow().clone() {
+            let start = start_date(*off_r.borrow());
+            sn(d_r.borrow().clone());
+            let mut d = d_r.borrow_mut();
+            let task_opt: Option<&mut TaskRecord> = if col >= 0 {
+                let date = start + Duration::days(col as i64);
+                d.day_tasks.get_mut(&date_key(date)).and_then(|v| v.iter_mut().find(|t| t.id == task_id))
+            } else {
+                d.someday_lists.get_mut(list_idx as usize).and_then(|l| l.tasks.iter_mut().find(|t| t.id == task_id))
+            };
+            if let Some(t) = task_opt {
+                let note = text.to_string();
+                t.note_text = if note.trim().is_empty() { None } else { Some(note) };
+            }
+            save_and_record(&d, &fp_r.borrow(), &cfg_r, &us_r.borrow(), &low_r);
+            drop(d); rf();
+        }
+    }); }
+
         // ── attach-image: Dateidialog → Bild kopieren → Task aktualisieren ──────
     { let d_r = Rc::clone(&app_data); let off_r = Rc::clone(&week_offset);
+      let off_r2 = Rc::clone(&week_offset); let ui_w2 = ui.as_weak();
       let fp_r = Rc::clone(&data_file); let low_r = Rc::clone(&last_own_write); let cfg_r = Rc::clone(&cfg);
       let sn = snapshot.clone(); let us_r = Rc::clone(&undo_stack); let rf = refresh.clone();
       ui.on_attach_image(move |col, list_idx, id| {
@@ -1479,21 +1655,74 @@ fn main() -> Result<(), slint::PlatformError> {
                 .and_then(|l| l.tasks.iter().find(|t| t.id == id.as_str()))
         };
         if let Some(t) = task_opt {
-            if let Some(ref fname) = t.image_filename {
-                let path = images_dir(&fp_r.borrow()).join(fname);
-                if let Ok(img) = slint::Image::load_from_path(&path) {
-                    let ui = ui_w.unwrap();
-                    ui.set_popup_image(img);
-                    ui.set_popup_image_col(col);
-                    ui.set_popup_image_list_idx(list_idx);
-                    ui.set_popup_image_task_id(id);
-                    ui.invoke_open_image_popup();
-                }
-            }
+            let ui = ui_w.unwrap();
+            ui.set_popup_image_col(col);
+            ui.set_popup_image_list_idx(list_idx);
+            ui.set_popup_image_task_id(id.clone());
+            // Load all thumbnails
+            let imgs_dir = images_dir(&fp_r.borrow());
+            let thumbs: Vec<slint::Image> = t.image_filenames.iter()
+                .filter_map(|fname| {
+                    slint::Image::load_from_path(&imgs_dir.join(fname)).ok()
+                })
+                .collect();
+            let fnames: Vec<slint::SharedString> = t.image_filenames.iter()
+                .map(|f| slint::SharedString::from(f.as_str()))
+                .collect();
+            ui.set_popup_thumbnails(slint::ModelRc::new(slint::VecModel::from(thumbs)));
+            ui.set_popup_thumbnail_filenames(slint::ModelRc::new(slint::VecModel::from(fnames)));
+            ui.set_popup_image(slint::Image::default());
+            ui.set_note_editor_open(true);
         }
     }); }
 
-    // ── delete-image: Bild aus Task entfernen (Datei wird orphan-cleanup gelöscht) ─
+    // ── delete-image-by-name: entfernt ein bestimmtes Bild per Dateiname ────────
+    { let d_r = Rc::clone(&app_data); let off_r = Rc::clone(&week_offset);
+      let off_r2 = Rc::clone(&week_offset); let ui_w2 = ui.as_weak();
+      let fp_r = Rc::clone(&data_file); let low_r = Rc::clone(&last_own_write); let cfg_r = Rc::clone(&cfg);
+      let sn = snapshot.clone(); let us_r = Rc::clone(&undo_stack); let rf = refresh.clone();
+      ui.on_delete_image_by_name(move |col, list_idx, task_id, filename| {
+        sn(d_r.borrow().clone());
+        let mut d = d_r.borrow_mut();
+        let start = start_date(*off_r.borrow());
+        let task_opt: Option<&mut TaskRecord> = if col >= 0 {
+            let date = start + Duration::days(col as i64);
+            d.day_tasks.get_mut(&date_key(date))
+                .and_then(|v| v.iter_mut().find(|t| t.id == task_id.as_str()))
+        } else {
+            d.someday_lists.get_mut(list_idx as usize)
+                .and_then(|l| l.tasks.iter_mut().find(|t| t.id == task_id.as_str()))
+        };
+        if let Some(t) = task_opt {
+            t.image_filenames.retain(|f| f.as_str() != filename.as_str());
+        }
+        save_and_record(&d, &fp_r.borrow(), &cfg_r, &us_r.borrow(), &low_r);
+        // Reload thumbnails in attachment dialog
+        let d2 = d_r.borrow();
+        let start2 = start_date(*off_r2.borrow());
+        let task2: Option<&TaskRecord> = if col >= 0 {
+            let date = start2 + Duration::days(col as i64);
+            d2.day_tasks.get(&date_key(date)).and_then(|v| v.iter().find(|t| t.id == task_id.as_str()))
+        } else {
+            d2.someday_lists.get(list_idx as usize).and_then(|l| l.tasks.iter().find(|t| t.id == task_id.as_str()))
+        };
+        let imgs_dir = images_dir(&fp_r.borrow());
+        let fnames_vec: Vec<String> = task2.map(|t| t.image_filenames.clone()).unwrap_or_default();
+        let thumbs: Vec<slint::Image> = fnames_vec.iter()
+            .filter_map(|f| slint::Image::load_from_path(&imgs_dir.join(f)).ok())
+            .collect();
+        let fnames_slint: Vec<slint::SharedString> = fnames_vec.iter()
+            .map(|f| slint::SharedString::from(f.as_str()))
+            .collect();
+        drop(d2); drop(d);
+        if let Some(ui2) = ui_w2.upgrade() {
+            ui2.set_popup_thumbnails(slint::ModelRc::new(slint::VecModel::from(thumbs)));
+            ui2.set_popup_thumbnail_filenames(slint::ModelRc::new(slint::VecModel::from(fnames_slint)));
+        }
+        rf();
+    }); }
+
+    // ── delete-image: legacy (not used in new UI but kept for compatibility)
     { let d_r = Rc::clone(&app_data); let off_r = Rc::clone(&week_offset);
       let fp_r = Rc::clone(&data_file); let low_r = Rc::clone(&last_own_write); let cfg_r = Rc::clone(&cfg);
       let sn = snapshot.clone(); let us_r = Rc::clone(&undo_stack); let rf = refresh.clone();
@@ -1509,7 +1738,7 @@ fn main() -> Result<(), slint::PlatformError> {
             d.someday_lists.get_mut(list_idx as usize)
                 .and_then(|l| l.tasks.iter_mut().find(|t| t.id == id.as_str()))
         };
-        if let Some(t) = task_opt { t.image_filename = None; }
+        if let Some(t) = task_opt { t.image_filenames.clear(); }
         save_and_record(&d, &fp_r.borrow(), &cfg_r, &us_r.borrow(), &low_r); drop(d); rf();
     }); }
 

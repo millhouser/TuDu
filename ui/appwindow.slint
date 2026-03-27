@@ -2,16 +2,26 @@ import { ScrollView, TextEdit, TimePickerPopup } from "std-widgets.slint";
 
 // ─── Data structures ─────────────────────────────────────────────────────────
 
+// Styled text span for note rendering
+struct NoteSpan {
+    text:      string,
+    bold:      bool,
+    italic:    bool,
+    underline: bool,
+    heading:   int,   // 0=normal, 1=H1, 2=H2
+}
+
 struct Task {
     id:             string,
     text:           string,
     done:           bool,
-    due-label:      string,   // nur Datum: "6. Mär"
-    due-time-label: string,   // nur Uhrzeit: "09:00" oder ""
+    due-label:      string,
+    due-time-label: string,
     due-overdue:    bool,
     due-today:      bool,
     has-image:      bool,
-    color-hex:      string,   // "" = keine Farbe
+    has-note:       bool,
+    color-hex:      string,
 }
 
 struct DayData {
@@ -300,6 +310,7 @@ component TaskRow inherits Rectangle {
     callback stop-editing();
     callback attach-image();
     callback view-image();
+    callback open-note();
     callback image-file-dropped(string);
     callback set-color(string);   // hex oder "" für keine Farbe
 
@@ -541,7 +552,10 @@ component TaskRow inherits Rectangle {
                 alignment: center; spacing: 0px; padding-right: 4px;
                 HorizontalLayout {
                     alignment: end; spacing: 2px;
-                    if task.has-image && task.due-label == "": Image {
+                    if task.has-note && !task.has-image: Image {
+                        source: @image-url("../assets/icons/note.svg"); width: 11px; height: 11px;
+                        y: 1px; horizontal-alignment: left; opacity: 0.6; }
+                if task.has-image && task.due-label == "": Image {
                         source: @image-url("../assets/icons/clip.svg"); width: 11px; height: 11px;
                         vertical-alignment: center; opacity: 0.7;
                     }
@@ -558,6 +572,9 @@ component TaskRow inherits Rectangle {
                          : task.due-today   ? Theme.due-today
                          :                    Theme.due-ok;
                 }
+                if task.has-note && !task.has-image && task.due-label != "": Image {
+                    source: @image-url("../assets/icons/note.svg"); width: 10px; height: 10px;
+                    opacity: 0.6; }
                 if task.has-image && task.due-label != "": Image {
                     source: @image-url("../assets/icons/clip.svg"); width: 10px; height: 10px;
                     horizontal-alignment: right; opacity: 0.7;
@@ -606,8 +623,7 @@ component TaskRow inherits Rectangle {
                             root.set-due();
                         }
                     } else if self.mouse-x >= 29px {
-                        if task.has-image { root.view-image(); }
-                        else if !task.done { root.attach-image(); }
+                        root.open-note();
                     } else {
                         colour-picker.show();
                     }
@@ -834,6 +850,8 @@ component TaskRow inherits Rectangle {
         }
     }
     // opts-menu-open wird nicht mehr benötigt; popup per .show()/.close() gesteuert
+
+
 }
 
 // ─── DayColumn ────────────────────────────────────────────────────────────────
@@ -858,6 +876,7 @@ component DayColumn inherits Rectangle {
     callback stop-editing();
     callback attach-image(int, string);
     callback view-image(int, string);
+    callback open-note(int, string);
     callback image-file-dropped(int, string, string);
     callback set-task-color(int, string, string);
 
@@ -893,6 +912,7 @@ component DayColumn inherits Rectangle {
             stop-editing       => { root.stop-editing(); }
             attach-image       => { root.attach-image(root.col-index, task.id); }
             view-image         => { root.view-image(root.col-index, task.id); }
+            open-note          => { root.open-note(root.col-index, task.id); }
             image-file-dropped(p) => { root.image-file-dropped(root.col-index, task.id, p); }
             set-color(hex)     => { root.set-task-color(root.col-index, task.id, hex); }
         }
@@ -1005,6 +1025,7 @@ component SomedayListCard inherits Rectangle {
     callback stop-editing();
     callback attach-someday-image(int, string);
     callback view-someday-image(int, string);
+    callback open-someday-note(int, string);
     callback someday-image-file-dropped(int, string, string);
     callback set-someday-task-color(int, string, string);   // list-idx, id, hex
     callback list-drag-dropped();
@@ -1228,6 +1249,7 @@ component SomedayListCard inherits Rectangle {
                     stop-editing       => { root.stop-editing(); }
                     attach-image       => { root.attach-someday-image(root.list-index, task.id); }
                     view-image         => { root.view-someday-image(root.list-index, task.id); }
+                    open-note          => { root.open-someday-note(root.list-index, task.id); }
                     image-file-dropped(p) => { root.someday-image-file-dropped(root.list-index, task.id, p); }
                     set-color(hex)     => { root.set-someday-task-color(root.list-index, task.id, hex); }
                 }
@@ -1551,6 +1573,10 @@ export component AppWindow inherits Window {
     // ── Einstellungen ────────────────────────────────────────────────────────
     in-out property <bool>   settings-open: false;
     in-out property <bool>   about-open:    false;
+    in-out property <bool>   note-editor-open: false;
+    in-out property <string> note-editor-text: "";
+    in-out property <bool>   note-show-preview: false;
+    in-out property <[NoteSpan]> note-preview-spans;
     in-out property <string> accent-hex:    "#1c1c1c";  // aktuell gewählte Akzentfarbe
     callback set-accent-color(string);  // hex → Rust speichert + setzt Theme
     callback reset-settings();          // alles auf Standard zurücksetzen
@@ -1572,6 +1598,12 @@ export component AppWindow inherits Window {
     in-out property <int>    popup-image-col:      -1;
     in-out property <int>    popup-image-list-idx: -1;
     in-out property <string> popup-image-task-id:  "";
+    in-out property <[image]>  popup-thumbnails;
+    in-out property <[string]> popup-thumbnail-filenames;
+    in-out property <bool>   full-image-open: false;
+    in-out property <image>  full-image;
+    in-out property <string> full-image-filename: "";
+    in-out property <int>    full-image-idx: -1;
 
     // Hovered-Task für Datei-DnD (von TaskRow über start-editing analog gesetzt)
     in-out property <int>    hovered-task-col:      -1;
@@ -1625,7 +1657,8 @@ export component AppWindow inherits Window {
     callback rename-task(int, int, string, string); // col, list-idx, id, text
     callback attach-image(int, int, string);        // col, list-idx, id
     callback show-image(int, int, string);          // col, list-idx, id → Rust lädt Bild
-    callback delete-image(int, int, string);        // col, list-idx, id
+    callback delete-image(int, int, string);        // col, list-idx, id (reused as filename)
+    callback delete-image-by-name(int, int, string, string); // col, list-idx, task-id, filename
     callback file-drop-on-task(int, int, string, string); // col, list-idx, id, filepath
     callback set-task-color(int, int, string, string); // col, list-idx, id, hex
 
@@ -1641,11 +1674,11 @@ export component AppWindow inherits Window {
     callback due-cleared-for(int, int, string);  // col, list-idx, id
     callback clear-time-for(int, int, string);   // nur Uhrzeit löschen
     callback open-time-picker-for(int, int, string); // TimePicker direkt öffnen
+    callback open-note(int, int, string);            // note editor öffnen
+    callback save-note(string);                      // note text speichern
+    callback note-clear-markup();                       // entfernt Markup aus note-editor-text
 
     // ── Public functions (called from Rust via invoke_*) ──────────────────
-    public function open-image-popup() {
-        image-popup.show();
-    }
     public function open-date-picker() {
         date-picker.show();
     }
@@ -1831,6 +1864,7 @@ export component AppWindow inherits Window {
                             task-due-cleared(idx, id)  => { root.due-cleared-for(idx, -1, id); }
                             task-time-cleared(idx, id)     => { root.clear-time-for(idx, -1, id); }
                             task-open-time-picker(idx, id) => { root.open-time-picker-for(idx, -1, id); }
+                            open-note(idx, id)             => { root.open-note(idx, -1, id); }
                             start-editing(id)       => {
                                 root.editing-task-id = id;
                                 root.hovered-task-col = col-idx;
@@ -1921,6 +1955,7 @@ export component AppWindow inherits Window {
                             set-someday-task-due(idx, id)   => { root.set-task-due(-1, idx, id); }
                             someday-due-cleared(idx, id)    => { root.due-cleared-for(-1, idx, id); }
                             someday-time-cleared(idx, id)   => { root.clear-time-for(-1, idx, id); }
+                            open-someday-note(idx, id)      => { root.open-note(-1, idx, id); }
                             rename-list(idx, t)             => { root.rename-someday-list(idx, t); }
                             delete-list(idx)                => { root.delete-someday-list(idx); }
                             list-drag-dropped               => { root.reorder-someday-list(ListDragState.source-idx, ListDragState.target-idx); }
@@ -2026,74 +2061,7 @@ export component AppWindow inherits Window {
     }
 
     // ── Bild-Popup ──────────────────────────────────────────────────────────
-    image-popup := PopupWindow {
-        width: min(root.width - 80px, 700px);
-        height: min(root.height - 80px, 560px);
-        x: (root.width  - self.width)  / 2;
-        y: (root.height - self.height) / 2;
-        close-policy: no-auto-close;
 
-        Rectangle {
-            border-radius: 10px; border-width: 1px; border-color: Theme.border;
-            background: Theme.surface;
-            drop-shadow-blur: 32px; drop-shadow-offset-y: 10px; drop-shadow-color: #00000030;
-            clip: true;
-
-            VerticalLayout {
-                // ── Toolbar ──────────────────────────────────────────────────
-                Rectangle {
-                    height: 44px; background: Theme.ink;
-                    HorizontalLayout {
-                        padding-left: 14px; padding-right: 8px; spacing: 8px; alignment: space-between;
-                        Text {
-                            text: "Anhang"; font-size: 13px; font-weight: 700;
-                            color: Theme.today-ink; vertical-alignment: center;
-                        }
-                        HorizontalLayout {
-                            spacing: 4px;
-                            // 🗑 Löschen
-                            del-img-btn := TouchArea {
-                                width: 36px; height: 36px;
-                                Rectangle {
-                                    border-radius: 5px;
-                                    background: del-img-btn.has-hover ? #ff444433 : transparent;
-                                    animate background { duration: 60ms; }
-                                    Image { source: @image-url("../assets/icons/trash.svg"); width: 16px; height: 16px;
-                                           horizontal-alignment: center; vertical-alignment: center; }
-                                }
-                                clicked => {
-                                    image-popup.close();
-                                    root.delete-image(
-                                        root.popup-image-col,
-                                        root.popup-image-list-idx,
-                                        root.popup-image-task-id
-                                    );
-                                }
-                            }
-                            // × Schließen
-                            close-img-btn := TouchArea {
-                                width: 36px; height: 36px;
-                                Rectangle {
-                                    border-radius: 5px;
-                                    background: close-img-btn.has-hover ? #cc000088 : transparent;
-                                    animate background { duration: 60ms; }
-                                    Image { source: @image-url("../assets/icons/x.svg"); width: 20px; height: 20px;
-                                           horizontal-alignment: center; vertical-alignment: center; }
-                                }
-                                clicked => { image-popup.close(); }
-                            }
-                        }
-                    }
-                }
-                // ── Bild ─────────────────────────────────────────────────────
-                Image {
-                    source: root.popup-image;
-                    image-fit: contain;
-                    vertical-stretch: 1;
-                }
-            }
-        }
-    }
 
     // ── Deutscher DatePicker ─────────────────────────────────────────────
     date-picker := GermanDatePicker {
@@ -2808,6 +2776,274 @@ export component AppWindow inherits Window {
             }
         }
     }
+
+    // ── Notiz-Editor ─────────────────────────────────────────────────────────
+    // ── Kombinierter Anhang-Dialog (Text + Bild) ───────────────────────────────
+    if root.note-editor-open: Rectangle {
+        x: 0; y: 0; width: root.width; height: root.height;
+        z: 9100; background: #00000055;
+
+        att-card := Rectangle {
+            x: (parent.width  - self.width)  / 2;
+            y: (parent.height - self.height) / 2;
+            width: min(parent.width - 32px, 740px);
+            height: min(parent.height - 40px, 680px);
+            background: Theme.surface;
+            border-radius: 12px;
+            border-width: 1px; border-color: Theme.border;
+            drop-shadow-blur: 40px; drop-shadow-offset-y: 8px;
+            drop-shadow-color: #00000033;
+            clip: true;
+
+            VerticalLayout {
+                // ── Kopfzeile ─────────────────────────────────────────────
+                Rectangle {
+                    height: 48px; background: Theme.hdr-bg;
+                    HorizontalLayout {
+                        padding-left: 20px; padding-right: 8px;
+                        Text { text: "Anhang"; color: Theme.today-ink;
+                               font-size: 13px; font-weight: 700;
+                               vertical-alignment: center; horizontal-stretch: 1; }
+                        att-close := TouchArea {
+                            width: 40px; height: 48px;
+                            Rectangle {
+                                border-radius: 5px;
+                                background: att-close.has-hover ? #cc000088 : transparent;
+                                animate background { duration: 80ms; }
+                                Text { text: "×"; font-size: 20px; color: Theme.today-ink;
+                                       horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                            clicked => { root.note-editor-open = false; }
+                        }
+                    }
+                }
+
+                // ── Notizbereich ──────────────────────────────────────────
+                Rectangle {
+                    height: 200px;
+                    VerticalLayout {
+                        padding-left: 12px; padding-right: 12px; padding-top: 10px; padding-bottom: 8px;
+                        Text { text: "NOTIZ"; font-size: 10px; font-weight: 700;
+                               color: Theme.ink-ghost; letter-spacing: 1px; }
+                        Rectangle {
+                            vertical-stretch: 1;
+                            border-radius: 6px; border-width: 1px;
+                            border-color: note-input.has-focus ? Theme.accent : Theme.border;
+                            background: Theme.hover-bg;
+                            animate border-color { duration: 80ms; }
+                            clip: true;
+                            ScrollView {
+                                note-input := TextInput {
+                                    x: 10px; y: 8px;
+                                    width: parent.width - 20px;
+                                    single-line: false; wrap: word-wrap;
+                                    font-size: 14px; color: Theme.ink;
+                                    text <=> root.note-editor-text;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle { height: 1px; background: Theme.border; }
+
+                // ── Bilder-Bereich ────────────────────────────────────────
+                VerticalLayout {
+                    vertical-stretch: 1;
+                    padding-left: 12px; padding-right: 12px; padding-top: 10px; padding-bottom: 8px;
+                    spacing: 8px;
+
+                    HorizontalLayout {
+                        alignment: space-between;
+                        Text { text: "BILDER"; font-size: 10px; font-weight: 700;
+                               color: Theme.ink-ghost; letter-spacing: 1px;
+                               vertical-alignment: center; }
+                        add-img-btn := TouchArea {
+                            height: 28px; width: 110px;
+                            Rectangle {
+                                border-radius: 5px; border-width: 1px; border-color: Theme.border;
+                                background: add-img-btn.has-hover ? Theme.hover-bg : transparent;
+                                animate background { duration: 60ms; }
+                                HorizontalLayout {
+                                    padding-left: 8px; spacing: 5px; alignment: center;
+                                    Text { text: "+"; font-size: 16px; color: Theme.ink;
+                                           vertical-alignment: center; }
+                                    Text { text: "Bild hinzufügen"; font-size: 11px; color: Theme.ink;
+                                           vertical-alignment: center; }
+                                }
+                            }
+                            clicked => {
+                                root.attach-image(root.popup-image-col, root.popup-image-list-idx,
+                                                  root.popup-image-task-id);
+                            }
+                        }
+                    }
+
+                    // Thumbnail-Reihe (horizontal scrollbar)
+                    if root.popup-thumbnails.length == 0: Rectangle {
+                        vertical-stretch: 1;
+                        border-radius: 6px; border-width: 1px; border-color: Theme.border;
+                        background: Theme.hover-bg;
+                        Text { text: "Keine Bilder";
+                               font-size: 13px; color: Theme.ink-ghost;
+                               horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                    if root.popup-thumbnails.length > 0: ScrollView {
+                        vertical-stretch: 1;
+                        HorizontalLayout {
+                            spacing: 8px; padding: 4px;
+                            for thumb[i] in root.popup-thumbnails: thumb-ta := TouchArea {
+                                width: 140px;
+                                property <bool> hovered: self.has-hover;
+                                // Click → open full image
+                                clicked => {
+                                    root.full-image = thumb;
+                                    root.full-image-filename = root.popup-thumbnail-filenames[i];
+                                    root.full-image-idx = i;
+                                    root.full-image-open = true;
+                                }
+                                Rectangle {
+                                    border-radius: 6px;
+                                    border-width: 1px; border-color: Theme.border;
+                                    clip: true;
+                                    background: Theme.hover-bg;
+                                    Image {
+                                        source: thumb;
+                                        image-fit: cover;
+                                        width: parent.width;
+                                        height: parent.height;
+                                    }
+                                    // Hover overlay with trash icon
+                                    if thumb-ta.hovered: Rectangle {
+                                        background: #00000066;
+                                        del-thumb-ta := TouchArea {
+                                            x: (parent.width - 36px) / 2;
+                                            y: (parent.height - 36px) / 2;
+                                            width: 36px; height: 36px;
+                                            Rectangle {
+                                                border-radius: 6px;
+                                                background: del-thumb-ta.has-hover ? #ff444499 : #ffffff33;
+                                                animate background { duration: 60ms; }
+                                                Image {
+                                                    source: @image-url("../assets/icons/trash-white.svg");
+                                                    width: 18px; height: 18px;
+                                                    horizontal-alignment: center;
+                                                    vertical-alignment: center;
+                                                }
+                                            }
+                                            clicked => {
+                                                root.delete-image-by-name(
+                                                    root.popup-image-col,
+                                                    root.popup-image-list-idx,
+                                                    root.popup-image-task-id,
+                                                    root.popup-thumbnail-filenames[i]
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ── Buttons ───────────────────────────────────────────────
+                Rectangle { height: 1px; background: Theme.border; }
+                HorizontalLayout {
+                    padding: 12px; spacing: 8px; alignment: end;
+                    att-cancel := TouchArea { width: 80px; height: 34px;
+                        Rectangle {
+                            border-radius: 6px; border-width: 1px; border-color: Theme.border;
+                            background: att-cancel.has-hover ? Theme.hover-bg : transparent;
+                            Text { text: "Abbrechen"; font-size: 12px; color: Theme.ink;
+                                   horizontal-alignment: center; vertical-alignment: center; }
+                        }
+                        clicked => { root.note-editor-open = false; }
+                    }
+                    att-ok := TouchArea { width: 60px; height: 34px;
+                        Rectangle {
+                            border-radius: 6px;
+                            background: att-ok.has-hover ? Theme.btn-accent-hover : Theme.accent;
+                            Text { text: "OK"; font-size: 12px; font-weight: 700; color: Theme.today-ink;
+                                   horizontal-alignment: center; vertical-alignment: center; }
+                        }
+                        clicked => {
+                            root.save-note(note-input.text);
+                            root.note-editor-open = false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ── Vollbild-Overlay ─────────────────────────────────────────────────────
+    if root.full-image-open: Rectangle {
+        x: 0; y: 0; width: root.width; height: root.height;
+        z: 9200; background: #000000cc;
+        TouchArea {
+            clicked => { root.full-image-open = false; }
+        }
+        Rectangle {
+            x: 40px; y: 40px;
+            width: parent.width - 80px;
+            height: parent.height - 80px;
+            background: Theme.surface;
+            border-radius: 10px; clip: true;
+            VerticalLayout {
+                Rectangle {
+                    height: 44px; background: Theme.ink;
+                    HorizontalLayout {
+                        padding-left: 14px; padding-right: 8px;
+                        alignment: space-between;
+                        Text { text: "Bild"; font-size: 13px; font-weight: 700;
+                               color: Theme.today-ink; vertical-alignment: center;
+                               horizontal-stretch: 1; }
+                        HorizontalLayout { spacing: 4px;
+                            full-del := TouchArea { width: 36px; height: 36px;
+                                Rectangle {
+                                    border-radius: 5px;
+                                    background: full-del.has-hover ? #ff444433 : transparent;
+                                    animate background { duration: 60ms; }
+                                    Image { source: @image-url("../assets/icons/trash.svg");
+                                           width: 16px; height: 16px;
+                                           horizontal-alignment: center; vertical-alignment: center; }
+                                }
+                                clicked => {
+                                    root.full-image-open = false;
+                                    root.delete-image-by-name(
+                                        root.popup-image-col,
+                                        root.popup-image-list-idx,
+                                        root.popup-image-task-id,
+                                        root.full-image-filename
+                                    );
+                                }
+                            }
+                            full-close := TouchArea { width: 36px; height: 36px;
+                                Rectangle {
+                                    border-radius: 5px;
+                                    background: full-close.has-hover ? #cc000088 : transparent;
+                                    animate background { duration: 60ms; }
+                                    Image { source: @image-url("../assets/icons/x.svg");
+                                           width: 20px; height: 20px;
+                                           horizontal-alignment: center; vertical-alignment: center; }
+                                }
+                                clicked => { root.full-image-open = false; }
+                            }
+                        }
+                    }
+                }
+                Image {
+                    source: root.full-image;
+                    image-fit: contain;
+                    vertical-stretch: 1;
+                }
+            }
+        }
+    }
+
+
+
 
     // ── Globaler Tooltip-Overlay (oberste Ebene, nicht geclippt) ────────
     if TooltipState.text != "": Rectangle {
