@@ -1655,7 +1655,8 @@ export component AppWindow inherits Window {
     callback quit-app();
     callback set-task-due(int, int, string);     // col, list-idx, id
     callback rename-task(int, int, string, string); // col, list-idx, id, text
-    callback attach-image(int, int, string);        // col, list-idx, id
+    callback attach-image(int, int, string);
+    callback attach-image-path(int, int, string, string);        // col, list-idx, id
     callback show-image(int, int, string);          // col, list-idx, id → Rust lädt Bild
     callback delete-image(int, int, string);        // col, list-idx, id (reused as filename)
     callback delete-image-by-name(int, int, string, string); // col, list-idx, task-id, filename
@@ -2820,7 +2821,7 @@ export component AppWindow inherits Window {
 
                 // ── Notizbereich ──────────────────────────────────────────
                 Rectangle {
-                    height: 200px;
+                    height: 220px;
                     VerticalLayout {
                         padding-left: 12px; padding-right: 12px; padding-top: 10px; padding-bottom: 8px;
                         Text { text: "NOTIZ"; font-size: 10px; font-weight: 700;
@@ -2832,14 +2833,13 @@ export component AppWindow inherits Window {
                             background: Theme.hover-bg;
                             animate border-color { duration: 80ms; }
                             clip: true;
-                            ScrollView {
-                                note-input := TextInput {
-                                    x: 10px; y: 8px;
-                                    width: parent.width - 20px;
-                                    single-line: false; wrap: word-wrap;
-                                    font-size: 14px; color: Theme.ink;
-                                    text <=> root.note-editor-text;
-                                }
+                            note-input := TextInput {
+                                x: 10px; y: 8px;
+                                width: parent.width - 20px;
+                                height: max(parent.height - 16px, self.preferred-height);
+                                single-line: false; wrap: word-wrap;
+                                font-size: 14px; color: Theme.ink;
+                                text <=> root.note-editor-text;
                             }
                         }
                     }
@@ -2855,9 +2855,14 @@ export component AppWindow inherits Window {
 
                     HorizontalLayout {
                         alignment: space-between;
-                        Text { text: "BILDER"; font-size: 10px; font-weight: 700;
-                               color: Theme.ink-ghost; letter-spacing: 1px;
-                               vertical-alignment: center; }
+                        HorizontalLayout {
+                            spacing: 6px;
+                            Text { text: "BILDER"; font-size: 10px; font-weight: 700;
+                                   color: Theme.ink-ghost; letter-spacing: 1px;
+                                   vertical-alignment: center; }
+                            Text { text: "· oder Dateien ablegen"; font-size: 10px;
+                                   color: Theme.ink-ghost; vertical-alignment: center; }
+                        }
                         add-img-btn := TouchArea {
                             height: 28px; width: 110px;
                             Rectangle {
@@ -2879,17 +2884,36 @@ export component AppWindow inherits Window {
                         }
                     }
 
-                    // Thumbnail-Reihe (horizontal scrollbar)
-                    if root.popup-thumbnails.length == 0: Rectangle {
+                    // Thumbnail-Reihe + Drop-Zone
+                    if root.popup-thumbnails.length == 0: drop-empty-ta := TouchArea {
                         vertical-stretch: 1;
-                        border-radius: 6px; border-width: 1px; border-color: Theme.border;
-                        background: Theme.hover-bg;
-                        Text { text: "Keine Bilder";
-                               font-size: 13px; color: Theme.ink-ghost;
-                               horizontal-alignment: center; vertical-alignment: center; }
+                        drop-event(e) => {
+                            if e.kind == DropEventKind.drop {
+                                root.attach-image-path(
+                                    root.popup-image-col, root.popup-image-list-idx,
+                                    root.popup-image-task-id, e.text);
+                                accept
+                            } else { accept }
+                        }
+                        Rectangle {
+                            border-radius: 6px; border-width: 1.5px; border-color: Theme.border;
+                            background: Theme.hover-bg;
+                            Text { text: "Keine Bilder — Dateien hier ablegen";
+                                   font-size: 12px; color: Theme.ink-ghost;
+                                   horizontal-alignment: center; vertical-alignment: center; }
+                        }
                     }
-                    if root.popup-thumbnails.length > 0: ScrollView {
+                    if root.popup-thumbnails.length > 0: drop-fill-ta := TouchArea {
                         vertical-stretch: 1;
+                        drop-event(e) => {
+                            if e.kind == DropEventKind.drop {
+                                root.attach-image-path(
+                                    root.popup-image-col, root.popup-image-list-idx,
+                                    root.popup-image-task-id, e.text);
+                                accept
+                            } else { accept }
+                        }
+                        ScrollView {
                         HorizontalLayout {
                             spacing: 8px; padding: 4px;
                             for thumb[i] in root.popup-thumbnails: thumb-ta := TouchArea {
@@ -2944,6 +2968,7 @@ export component AppWindow inherits Window {
                                 }
                             }
                         }
+                        } // ScrollView
                     }
                 }
 
