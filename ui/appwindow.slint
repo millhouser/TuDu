@@ -2829,17 +2829,18 @@ export component AppWindow inherits Window {
                         Rectangle {
                             vertical-stretch: 1;
                             border-radius: 6px; border-width: 1px;
-                            border-color: note-input.has-focus ? Theme.accent : Theme.border;
+                            border-color: Theme.border;
                             background: Theme.hover-bg;
                             animate border-color { duration: 80ms; }
-                            clip: true;
-                            note-input := TextInput {
-                                x: 10px; y: 8px;
-                                width: parent.width - 20px;
-                                height: max(parent.height - 16px, self.preferred-height);
-                                single-line: false; wrap: word-wrap;
-                                font-size: 14px; color: Theme.ink;
-                                text <=> root.note-editor-text;
+                            ScrollView {
+                                note-input := TextInput {
+                                    x: 10px; y: 8px;
+                                    width: parent.width - 20px;
+                                    height: max(160px, self.preferred-height);
+                                    single-line: false; wrap: word-wrap;
+                                    font-size: 14px; color: Theme.ink;
+                                    text <=> root.note-editor-text;
+                                }
                             }
                         }
                     }
@@ -2855,14 +2856,9 @@ export component AppWindow inherits Window {
 
                     HorizontalLayout {
                         alignment: space-between;
-                        HorizontalLayout {
-                            spacing: 6px;
-                            Text { text: "BILDER"; font-size: 10px; font-weight: 700;
-                                   color: Theme.ink-ghost; letter-spacing: 1px;
-                                   vertical-alignment: center; }
-                            Text { text: "· oder Dateien ablegen"; font-size: 10px;
-                                   color: Theme.ink-ghost; vertical-alignment: center; }
-                        }
+                        Text { text: "BILDER"; font-size: 10px; font-weight: 700;
+                               color: Theme.ink-ghost; letter-spacing: 1px;
+                               vertical-alignment: center; }
                         add-img-btn := TouchArea {
                             height: 28px; width: 110px;
                             Rectangle {
@@ -2885,90 +2881,70 @@ export component AppWindow inherits Window {
                     }
 
                     // Thumbnail-Reihe + Drop-Zone
-                    if root.popup-thumbnails.length == 0: drop-empty-ta := TouchArea {
+                    if root.popup-thumbnails.length == 0: Rectangle {
                         vertical-stretch: 1;
-                        drop-event(e) => {
-                            if e.kind == DropEventKind.drop {
-                                root.attach-image-path(
-                                    root.popup-image-col, root.popup-image-list-idx,
-                                    root.popup-image-task-id, e.text);
-                                accept
-                            } else { accept }
-                        }
-                        Rectangle {
-                            border-radius: 6px; border-width: 1.5px; border-color: Theme.border;
-                            background: Theme.hover-bg;
-                            Text { text: "Keine Bilder — Dateien hier ablegen";
-                                   font-size: 12px; color: Theme.ink-ghost;
-                                   horizontal-alignment: center; vertical-alignment: center; }
-                        }
+                        border-radius: 6px; border-width: 1.5px; border-color: Theme.border;
+                        background: Theme.hover-bg;
+                        Text { text: "Keine Bilder";
+                               font-size: 12px; color: Theme.ink-ghost;
+                               horizontal-alignment: center; vertical-alignment: center; }
                     }
-                    if root.popup-thumbnails.length > 0: drop-fill-ta := TouchArea {
+                    if root.popup-thumbnails.length > 0: ScrollView {
                         vertical-stretch: 1;
-                        drop-event(e) => {
-                            if e.kind == DropEventKind.drop {
-                                root.attach-image-path(
-                                    root.popup-image-col, root.popup-image-list-idx,
-                                    root.popup-image-task-id, e.text);
-                                accept
-                            } else { accept }
-                        }
-                        ScrollView {
                         HorizontalLayout {
                             spacing: 8px; padding: 4px;
-                            for thumb[i] in root.popup-thumbnails: thumb-ta := TouchArea {
+                            for thumb[i] in root.popup-thumbnails: thumb-outer := Rectangle {
                                 width: 140px;
-                                property <bool> hovered: self.has-hover;
-                                // Click → open full image
-                                clicked => {
-                                    root.full-image = thumb;
-                                    root.full-image-filename = root.popup-thumbnail-filenames[i];
-                                    root.full-image-idx = i;
-                                    root.full-image-open = true;
-                                }
-                                Rectangle {
-                                    border-radius: 6px;
-                                    border-width: 1px; border-color: Theme.border;
-                                    clip: true;
-                                    background: Theme.hover-bg;
-                                    Image {
-                                        source: thumb;
-                                        image-fit: cover;
-                                        width: parent.width;
-                                        height: parent.height;
+                                // Image card
+                                thumb-ta := TouchArea {
+                                    clicked => {
+                                        root.full-image = thumb;
+                                        root.full-image-filename = root.popup-thumbnail-filenames[i];
+                                        root.full-image-idx = i;
+                                        root.full-image-open = true;
                                     }
-                                    // Hover overlay with trash icon
-                                    if thumb-ta.hovered: Rectangle {
-                                        background: #00000066;
-                                        del-thumb-ta := TouchArea {
-                                            x: (parent.width - 36px) / 2;
-                                            y: (parent.height - 36px) / 2;
-                                            width: 36px; height: 36px;
-                                            Rectangle {
-                                                border-radius: 6px;
-                                                background: del-thumb-ta.has-hover ? #ff444499 : #ffffff33;
-                                                animate background { duration: 60ms; }
-                                                Image {
-                                                    source: @image-url("../assets/icons/trash-white.svg");
-                                                    width: 18px; height: 18px;
-                                                    horizontal-alignment: center;
-                                                    vertical-alignment: center;
-                                                }
-                                            }
-                                            clicked => {
-                                                root.delete-image-by-name(
-                                                    root.popup-image-col,
-                                                    root.popup-image-list-idx,
-                                                    root.popup-image-task-id,
-                                                    root.popup-thumbnail-filenames[i]
-                                                );
-                                            }
+                                    Rectangle {
+                                        border-radius: 6px;
+                                        border-width: 1px; border-color: Theme.border;
+                                        clip: true;
+                                        background: Theme.hover-bg;
+                                        Image {
+                                            source: thumb;
+                                            image-fit: cover;
+                                            width: parent.width;
+                                            height: parent.height;
                                         }
+                                    }
+                                }
+                                // Trash button – bottom right, visible on hover
+                                // Always in DOM (no if-block) to keep scope for callbacks
+                                del-thumb-ta := TouchArea {
+                                    x: parent.width - 34px;
+                                    y: parent.height - 34px;
+                                    width: 30px; height: 30px;
+                                    visible: thumb-ta.has-hover || del-thumb-ta.has-hover;
+                                    Rectangle {
+                                        border-radius: 5px;
+                                        background: del-thumb-ta.has-hover ? #cc2222dd : #000000aa;
+                                        animate background { duration: 60ms; }
+                                        Image {
+                                            source: @image-url("../assets/icons/trash-white.svg");
+                                            width: 14px; height: 14px;
+                                            horizontal-alignment: center;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                    clicked => {
+                                        root.delete-image-by-name(
+                                            root.popup-image-col,
+                                            root.popup-image-list-idx,
+                                            root.popup-image-task-id,
+                                            root.popup-thumbnail-filenames[i]
+                                        );
                                     }
                                 }
                             }
                         }
-                        } // ScrollView
                     }
                 }
 
@@ -2993,7 +2969,7 @@ export component AppWindow inherits Window {
                                    horizontal-alignment: center; vertical-alignment: center; }
                         }
                         clicked => {
-                            root.save-note(note-input.text);
+                            root.save-note(root.note-editor-text);
                             root.note-editor-open = false;
                         }
                     }
@@ -3006,7 +2982,8 @@ export component AppWindow inherits Window {
     if root.full-image-open: Rectangle {
         x: 0; y: 0; width: root.width; height: root.height;
         z: 9200; background: #000000cc;
-        TouchArea {
+        // Click backdrop to close
+        backdrop-full := TouchArea {
             clicked => { root.full-image-open = false; }
         }
         Rectangle {
@@ -3016,52 +2993,101 @@ export component AppWindow inherits Window {
             background: Theme.surface;
             border-radius: 10px; clip: true;
             VerticalLayout {
+                // Toolbar
                 Rectangle {
                     height: 44px; background: Theme.ink;
                     HorizontalLayout {
-                        padding-left: 14px; padding-right: 8px;
+                        padding-left: 8px; padding-right: 8px;
                         alignment: space-between;
-                        Text { text: "Bild"; font-size: 13px; font-weight: 700;
-                               color: Theme.today-ink; vertical-alignment: center;
-                               horizontal-stretch: 1; }
-                        HorizontalLayout { spacing: 4px;
-                            full-del := TouchArea { width: 36px; height: 36px;
+                        // Prev/Next navigation
+                        HorizontalLayout { spacing: 2px;
+                            full-prev := TouchArea { width: 36px; height: 36px;
+                                enabled: root.full-image-idx > 0;
                                 Rectangle {
                                     border-radius: 5px;
-                                    background: full-del.has-hover ? #ff444433 : transparent;
+                                    background: full-prev.has-hover && full-prev.enabled ? #ffffff22 : transparent;
                                     animate background { duration: 60ms; }
-                                    Image { source: @image-url("../assets/icons/trash.svg");
-                                           width: 16px; height: 16px;
-                                           horizontal-alignment: center; vertical-alignment: center; }
+                                    Image { source: @image-url("../assets/icons/prev-white.svg");
+                                           width: 18px; height: 18px;
+                                           horizontal-alignment: center; vertical-alignment: center;
+                                           opacity: full-prev.enabled ? 1.0 : 0.3; }
                                 }
                                 clicked => {
-                                    root.full-image-open = false;
-                                    root.delete-image-by-name(
-                                        root.popup-image-col,
-                                        root.popup-image-list-idx,
-                                        root.popup-image-task-id,
-                                        root.full-image-filename
-                                    );
+                                    root.full-image-idx = root.full-image-idx - 1;
+                                    root.full-image = root.popup-thumbnails[root.full-image-idx];
+                                    root.full-image-filename = root.popup-thumbnail-filenames[root.full-image-idx];
                                 }
                             }
-                            full-close := TouchArea { width: 36px; height: 36px;
+                            Text {
+                                text: (root.full-image-idx + 1) + " / " + root.popup-thumbnails.length;
+                                font-size: 12px; color: Theme.today-ink;
+                                vertical-alignment: center; horizontal-alignment: center;
+                                width: 50px;
+                            }
+                            full-next := TouchArea { width: 36px; height: 36px;
+                                enabled: root.full-image-idx < root.popup-thumbnails.length - 1;
                                 Rectangle {
                                     border-radius: 5px;
-                                    background: full-close.has-hover ? #cc000088 : transparent;
+                                    background: full-next.has-hover && full-next.enabled ? #ffffff22 : transparent;
                                     animate background { duration: 60ms; }
-                                    Image { source: @image-url("../assets/icons/x.svg");
-                                           width: 20px; height: 20px;
-                                           horizontal-alignment: center; vertical-alignment: center; }
+                                    Image { source: @image-url("../assets/icons/next-white.svg");
+                                           width: 18px; height: 18px;
+                                           horizontal-alignment: center; vertical-alignment: center;
+                                           opacity: full-next.enabled ? 1.0 : 0.3; }
                                 }
-                                clicked => { root.full-image-open = false; }
+                                clicked => {
+                                    root.full-image-idx = root.full-image-idx + 1;
+                                    root.full-image = root.popup-thumbnails[root.full-image-idx];
+                                    root.full-image-filename = root.popup-thumbnail-filenames[root.full-image-idx];
+                                }
                             }
+                        }
+                        // Close
+                        full-close := TouchArea { width: 36px; height: 36px;
+                            Rectangle {
+                                border-radius: 5px;
+                                background: full-close.has-hover ? #cc000088 : transparent;
+                                animate background { duration: 60ms; }
+                                Image { source: @image-url("../assets/icons/x.svg");
+                                       width: 20px; height: 20px;
+                                       horizontal-alignment: center; vertical-alignment: center; }
+                            }
+                            clicked => { root.full-image-open = false; }
                         }
                     }
                 }
-                Image {
-                    source: root.full-image;
-                    image-fit: contain;
+                // Image (fills remaining space)
+                Rectangle {
                     vertical-stretch: 1;
+                    Image {
+                        source: root.full-image;
+                        image-fit: contain;
+                        width: parent.width;
+                        height: parent.height;
+                    }
+                    // Trash overlay – bottom right
+                    full-del := TouchArea {
+                        x: parent.width - 48px;
+                        y: parent.height - 48px;
+                        width: 40px; height: 40px;
+                        Rectangle {
+                            border-radius: 8px;
+                            background: full-del.has-hover ? #cc2222dd : #000000aa;
+                            animate background { duration: 60ms; }
+                            Image { source: @image-url("../assets/icons/trash-white.svg");
+                                   width: 18px; height: 18px;
+                                   horizontal-alignment: center; vertical-alignment: center; }
+                        }
+                        clicked => {
+                            root.full-image-open = false;
+                            root.delete-image-by-name(
+                                root.popup-image-col,
+                                root.popup-image-list-idx,
+                                root.popup-image-task-id,
+                                root.full-image-filename
+                            );
+                        }
+                    }
                 }
             }
         }

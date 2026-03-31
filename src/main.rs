@@ -1710,63 +1710,6 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     }); }
 
-    // ── attach-image-path: Bild per Pfad hinzufügen (Drag & Drop) ───────────────
-    { let d_r = Rc::clone(&app_data); let off_r = Rc::clone(&week_offset);
-      let off_r2 = Rc::clone(&week_offset); let ui_w2 = ui.as_weak();
-      let fp_r = Rc::clone(&data_file); let low_r = Rc::clone(&last_own_write); let cfg_r = Rc::clone(&cfg);
-      let sn = snapshot.clone(); let us_r = Rc::clone(&undo_stack); let rf = refresh.clone();
-      ui.on_attach_image_path(move |col, list_idx, task_id, path_str| {
-        // path_str may contain multiple paths separated by newlines (multi-drop)
-        let paths: Vec<std::path::PathBuf> = path_str
-            .split('\n')
-            .map(|p| std::path::PathBuf::from(p.trim()))
-            .filter(|p| p.exists())
-            .collect();
-        if paths.is_empty() { return; }
-        sn(d_r.borrow().clone());
-        {
-            let mut d = d_r.borrow_mut();
-            let start = start_date(*off_r.borrow());
-            let task_opt: Option<&mut TaskRecord> = if col >= 0 {
-                let date = start + Duration::days(col as i64);
-                d.day_tasks.get_mut(&date_key(date))
-                    .and_then(|v| v.iter_mut().find(|t| t.id == task_id.as_str()))
-            } else {
-                d.someday_lists.get_mut(list_idx as usize)
-                    .and_then(|l| l.tasks.iter_mut().find(|t| t.id == task_id.as_str()))
-            };
-            if let Some(t) = task_opt {
-                for path in &paths {
-                    if let Some(fname) = copy_image_to_store(path, &fp_r.borrow()) {
-                        if !t.image_filenames.contains(&fname) { t.image_filenames.push(fname); }
-                    }
-                }
-            }
-            save_and_record(&d, &fp_r.borrow(), &cfg_r, &us_r.borrow(), &low_r);
-        }
-        rf();
-        // Reload thumbnails
-        let d2 = d_r.borrow();
-        let start2 = start_date(*off_r2.borrow());
-        let task2: Option<&TaskRecord> = if col >= 0 {
-            let date = start2 + Duration::days(col as i64);
-            d2.day_tasks.get(&date_key(date)).and_then(|v| v.iter().find(|t| t.id == task_id.as_str()))
-        } else {
-            d2.someday_lists.get(list_idx as usize).and_then(|l| l.tasks.iter().find(|t| t.id == task_id.as_str()))
-        };
-        let imgs_dir = images_dir(&fp_r.borrow());
-        let fnames_vec: Vec<String> = task2.map(|t| t.image_filenames.clone()).unwrap_or_default();
-        let thumbs: Vec<slint::Image> = fnames_vec.iter()
-            .filter_map(|f| slint::Image::load_from_path(&imgs_dir.join(f)).ok()).collect();
-        let fnames_slint: Vec<slint::SharedString> = fnames_vec.iter()
-            .map(|f| slint::SharedString::from(f.as_str())).collect();
-        drop(d2);
-        if let Some(ui2) = ui_w2.upgrade() {
-            ui2.set_popup_thumbnails(slint::ModelRc::new(slint::VecModel::from(thumbs)));
-            ui2.set_popup_thumbnail_filenames(slint::ModelRc::new(slint::VecModel::from(fnames_slint)));
-        }
-    }); }
-
     // ── delete-image-by-name: entfernt ein bestimmtes Bild per Dateiname ────────
     { let d_r = Rc::clone(&app_data); let off_r = Rc::clone(&week_offset);
       let off_r2 = Rc::clone(&week_offset); let ui_w2 = ui.as_weak();

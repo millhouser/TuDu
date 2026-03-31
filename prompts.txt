@@ -1,6 +1,18 @@
 neue Ideen
 ==========
 
+- Das Programm stürzt immer noch ab, wenn ich ein Bild lösche. Immerhin wird es jetzt gelöscht.
+- wenn ich auf einen ausgegrauten Pfeil im Bild-PopUp kklicke wird das Bild geschlossen, das soll nicht sein.
+- Auch der letzte Versuch mit den Scrollbalken im Notizentext ist fehlgeschlagen. Überlege dir nochmal, ob du auch das richtige Widget verwendest.
+
+
+future (not yet implemented in Slint)
+=====================================
+
+- external drag and drop für Bilder
+- native SysTray-Unterstützung
+- Richtext bei Notizen
+- Notizenfenster Größe veränderbar
 
 erledigt
 ========
