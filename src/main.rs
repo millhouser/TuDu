@@ -1731,6 +1731,7 @@ fn main() -> Result<(), slint::PlatformError> {
             t.image_filenames.retain(|f| f.as_str() != filename.as_str());
         }
         save_and_record(&d, &fp_r.borrow(), &cfg_r, &us_r.borrow(), &low_r);
+        drop(d); // mutable borrow freigeben, bevor d_r.borrow() aufgerufen wird
         // Reload thumbnails in attachment dialog
         let d2 = d_r.borrow();
         let start2 = start_date(*off_r2.borrow());
@@ -1748,7 +1749,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let fnames_slint: Vec<slint::SharedString> = fnames_vec.iter()
             .map(|f| slint::SharedString::from(f.as_str()))
             .collect();
-        drop(d2); drop(d);
+        drop(d2);
         if let Some(ui2) = ui_w2.upgrade() {
             ui2.set_popup_thumbnails(slint::ModelRc::new(slint::VecModel::from(thumbs)));
             ui2.set_popup_thumbnail_filenames(slint::ModelRc::new(slint::VecModel::from(fnames_slint)));

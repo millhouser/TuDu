@@ -2832,14 +2832,27 @@ export component AppWindow inherits Window {
                             border-color: Theme.border;
                             background: Theme.hover-bg;
                             animate border-color { duration: 80ms; }
-                            ScrollView {
+                            note-scv := ScrollView {
+                                width: parent.width;
+                                height: parent.height;
+                                viewport-width: self.width - 20px;
+                                viewport-height: note-input.preferred-height + 16px;
                                 note-input := TextInput {
-                                    x: 10px; y: 8px;
-                                    width: parent.width - 20px;
-                                    height: max(160px, self.preferred-height);
+                                    width: parent.viewport-width;
+                                    height: parent.viewport-height;
                                     single-line: false; wrap: word-wrap;
                                     font-size: 14px; color: Theme.ink;
                                     text <=> root.note-editor-text;
+                                    cursor-position-changed(cpos) => {
+                                        // Cursor oben raus → nach oben scrollen
+                                        if cpos.y + note-scv.viewport-y < 4px {
+                                            note-scv.viewport-y = -cpos.y + 4px;
+                                        }
+                                        // Cursor unten raus → nach unten scrollen
+                                        if cpos.y + note-scv.viewport-y > note-scv.height - 24px {
+                                            note-scv.viewport-y = -(cpos.y - note-scv.height + 24px);
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -3002,20 +3015,22 @@ export component AppWindow inherits Window {
                         // Prev/Next navigation
                         HorizontalLayout { spacing: 2px;
                             full-prev := TouchArea { width: 36px; height: 36px;
-                                enabled: root.full-image-idx > 0;
+                                // Kein enabled:false – sonst fallen Klicks zum Backdrop durch!
                                 Rectangle {
                                     border-radius: 5px;
-                                    background: full-prev.has-hover && full-prev.enabled ? #ffffff22 : transparent;
+                                    background: full-prev.has-hover && root.full-image-idx > 0 ? #ffffff22 : transparent;
                                     animate background { duration: 60ms; }
                                     Image { source: @image-url("../assets/icons/prev-white.svg");
                                            width: 18px; height: 18px;
                                            horizontal-alignment: center; vertical-alignment: center;
-                                           opacity: full-prev.enabled ? 1.0 : 0.3; }
+                                           opacity: root.full-image-idx > 0 ? 1.0 : 0.3; }
                                 }
                                 clicked => {
-                                    root.full-image-idx = root.full-image-idx - 1;
-                                    root.full-image = root.popup-thumbnails[root.full-image-idx];
-                                    root.full-image-filename = root.popup-thumbnail-filenames[root.full-image-idx];
+                                    if root.full-image-idx > 0 {
+                                        root.full-image-idx = root.full-image-idx - 1;
+                                        root.full-image = root.popup-thumbnails[root.full-image-idx];
+                                        root.full-image-filename = root.popup-thumbnail-filenames[root.full-image-idx];
+                                    }
                                 }
                             }
                             Text {
@@ -3025,20 +3040,22 @@ export component AppWindow inherits Window {
                                 width: 50px;
                             }
                             full-next := TouchArea { width: 36px; height: 36px;
-                                enabled: root.full-image-idx < root.popup-thumbnails.length - 1;
+                                // Kein enabled:false – sonst fallen Klicks zum Backdrop durch!
                                 Rectangle {
                                     border-radius: 5px;
-                                    background: full-next.has-hover && full-next.enabled ? #ffffff22 : transparent;
+                                    background: full-next.has-hover && root.full-image-idx < root.popup-thumbnails.length - 1 ? #ffffff22 : transparent;
                                     animate background { duration: 60ms; }
                                     Image { source: @image-url("../assets/icons/next-white.svg");
                                            width: 18px; height: 18px;
                                            horizontal-alignment: center; vertical-alignment: center;
-                                           opacity: full-next.enabled ? 1.0 : 0.3; }
+                                           opacity: root.full-image-idx < root.popup-thumbnails.length - 1 ? 1.0 : 0.3; }
                                 }
                                 clicked => {
-                                    root.full-image-idx = root.full-image-idx + 1;
-                                    root.full-image = root.popup-thumbnails[root.full-image-idx];
-                                    root.full-image-filename = root.popup-thumbnail-filenames[root.full-image-idx];
+                                    if root.full-image-idx < root.popup-thumbnails.length - 1 {
+                                        root.full-image-idx = root.full-image-idx + 1;
+                                        root.full-image = root.popup-thumbnails[root.full-image-idx];
+                                        root.full-image-filename = root.popup-thumbnail-filenames[root.full-image-idx];
+                                    }
                                 }
                             }
                         }
