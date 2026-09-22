@@ -3,8 +3,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod tray_win;
-
 use chrono::{Datelike, Timelike, Duration, Local, NaiveDate, NaiveDateTime, Weekday};
 use notify_rust::Notification;
 use serde::{Deserialize, Serialize};
@@ -539,14 +537,6 @@ fn check_notifications(data: &AppData, notified: &mut HashSet<String>) {
 
 // ─── Load icon RGBA for tray ─────────────────────────────────────────────────
 
-fn load_icon_rgba() -> Option<(Vec<u8>, u32, u32)> {
-    use image::GenericImageView;
-    const PNG: &[u8] = include_bytes!("../assets/icon.png");
-    let img = image::load_from_memory(PNG).ok()?;
-    let (w, h) = img.dimensions();
-    Some((img.into_rgba8().into_raw(), w, h))
-}
-
 // ─── Main ────────────────────────────────────────────────────────────────────
 
 // ─── Undo/Redo ────────────────────────────────────────────────────────────────
@@ -654,14 +644,6 @@ fn main() -> Result<(), slint::PlatformError> {
     register_windows_notifications();
 
     std::env::set_var("LANG", "de_DE.UTF-8");
-
-    // On Linux, tray-icon needs GTK initialised before Slint.
-    #[cfg(target_os = "linux")]
-    {
-        // gtk is a transitive dep of tray-icon on Linux; init it.
-        // If gtk feature is not available this is a no-op.
-        let _ = std::process::Command::new("true").status(); // dummy – gtk init happens below
-    }
 
     // ── Load config & data ───────────────────────────────────────────────────
     let cfg: Rc<RefCell<AppConfig>> = Rc::new(RefCell::new(load_config()));
@@ -906,25 +888,20 @@ fn main() -> Result<(), slint::PlatformError> {
     }); }
 
     // task-drag-dropped (day → day or day → someday)
-    { let ui_w = ui.as_weak(); let off_r = Rc::clone(&week_offset);
+    { let off_r = Rc::clone(&week_offset);
       let d_r = Rc::clone(&app_data); let fp_r = Rc::clone(&data_file); let low_r = Rc::clone(&last_own_write); let cfg_r = Rc::clone(&cfg); let rf = refresh.clone();
       let sn = snapshot.clone();
       let us_r = Rc::clone(&undo_stack);
-      ui.on_task_drag_dropped(move || {
-        let ui = ui_w.unwrap();
-        let drag       = ui.global::<DragState>();
-        let src_col    = drag.get_source_col() as usize;
-        let task_id    = drag.get_task_id().to_string();
-        let tgt_task   = drag.get_target_task_idx();
-        let someday_f  = ui.get_drag_target_someday_idx_f();
-        let tgt_col    = (ui.get_drag_target_col_f() as i32).clamp(0, 6) as usize;
-        drag.set_active(false); drag.set_task_id(SharedString::default());
+      ui.on_task_drag_dropped(move |task_id, src_col, src_task_idx, tgt_col, tgt_task, someday_idx| {
         sn(d_r.borrow().clone());
-                let mut d = d_r.borrow_mut();
+        let mut d = d_r.borrow_mut();
         let start = start_date(*off_r.borrow());
-        if someday_f >= 0.0 {
-            // day → someday: an Zone-Grenze einfügen (erledigt/unerledigt getrennt)
-            let list_idx = (someday_f as usize).min(d.someday_lists.len().saturating_sub(1));
+        let src_col = src_col as usize;
+        let tgt_col = (tgt_col as i32).clamp(0, 6) as usize;
+        let task_id = task_id.to_string();
+        if someday_idx >= 0 {
+            // day → someday
+            let list_idx = (someday_idx as usize).min(d.someday_lists.len().saturating_sub(1));
             let src_key  = date_key(start + Duration::days(src_col as i64));
             let task = d.day_tasks.get_mut(&src_key)
                 .and_then(|v| v.iter().position(|t| t.id == task_id).map(|i| v.remove(i)));
@@ -935,12 +912,12 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
                 save_and_record(&d, &fp_r.borrow(), &cfg_r, &us_r.borrow(), &low_r);
             }
-        } else if src_col <= 6 {
-            // day → day (auch Reorder in gleicher Spalte)
+        } else {
+            // day → day
             let tgt_date = start + Duration::days(tgt_col as i64);
             let today    = Local::now().date_naive();
             if tgt_date >= today || tgt_col == src_col {
-                let src_task_idx = drag.get_source_task_idx() as usize;
+                let src_task_idx = src_task_idx as usize;
                 if move_task_between_days(&mut d, start, src_col, src_task_idx, &task_id, tgt_col, tgt_task) {
                     save_and_record(&d, &fp_r.borrow(), &cfg_r, &us_r.borrow(), &low_r);
                 }
@@ -950,26 +927,21 @@ fn main() -> Result<(), slint::PlatformError> {
     }); }
 
     // someday-task-drag-dropped
-    { let ui_w = ui.as_weak(); let off_r = Rc::clone(&week_offset);
+    { let off_r = Rc::clone(&week_offset);
       let d_r = Rc::clone(&app_data); let fp_r = Rc::clone(&data_file); let low_r = Rc::clone(&last_own_write); let cfg_r = Rc::clone(&cfg); let rf = refresh.clone();
       let sn = snapshot.clone();
       let us_r = Rc::clone(&undo_stack);
-      ui.on_someday_task_drag_dropped(move || {
+      ui.on_someday_task_drag_dropped(move |task_id, src_list_idx, tgt_task, someday_idx, tgt_col_idx| {
         sn(d_r.borrow().clone());
-        let ui       = ui_w.unwrap();
-        let drag     = ui.global::<DragState>();
-        let src_lst  = drag.get_source_list_idx() as usize;
-        let task_id  = drag.get_task_id().to_string();
-        let tgt_task = drag.get_target_task_idx();
-        let someday_f = ui.get_drag_target_someday_idx_f();
-        drag.set_active(false); drag.set_task_id(SharedString::default());
-
-        if someday_f >= 0.0 {
-            // someday → someday (gleiche oder andere Liste)
-            let tgt_lst = (someday_f as usize).min({
+        let task_id  = task_id.to_string();
+        let src_lst  = src_list_idx as usize;
+        let tgt_task = tgt_task;
+        if someday_idx >= 0 {
+            // someday → someday
+            let tgt_lst = {
                 let d = d_r.borrow();
-                d.someday_lists.len().saturating_sub(1)
-            });
+                (someday_idx as usize).min(d.someday_lists.len().saturating_sub(1))
+            };
             let task = {
                 let mut d = d_r.borrow_mut();
                 d.someday_lists.get_mut(src_lst)
@@ -978,22 +950,21 @@ fn main() -> Result<(), slint::PlatformError> {
             if let Some(t) = task {
                 let mut d = d_r.borrow_mut();
                 if let Some(list) = d.someday_lists.get_mut(tgt_lst) {
-                    // Gleiche Liste: tgt_task nutzen; andere Liste: an Zone-Grenze
                     let raw = if src_lst == tgt_lst && tgt_task >= 0 {
                         (tgt_task as usize).min(list.tasks.len())
                     } else {
-                        list.tasks.len() // Cross-list: Zone-Grenze (clamp übernimmt)
+                        list.tasks.len()
                     };
                     let to = clamp_to_zone(&list.tasks, t.done, raw);
                     list.tasks.insert(to, t);
                 }
-                save_and_record(&d, &fp_r.borrow(), &cfg_r, &us_r.borrow(), &low_r);
+                save_and_record(&d_r.borrow(), &fp_r.borrow(), &cfg_r, &us_r.borrow(), &low_r);
             }
         } else {
             // someday → day
-            let tgt_col = (ui.get_drag_target_col_f() as i32).clamp(0, 6) as usize;
-            let today   = Local::now().date_naive();
-            let start   = start_date(*off_r.borrow());
+            let tgt_col  = (tgt_col_idx as i32).clamp(0, 6) as usize;
+            let today    = Local::now().date_naive();
+            let start    = start_date(*off_r.borrow());
             let tgt_date = start + Duration::days(tgt_col as i64);
             if tgt_date >= today {
                 let task = {
@@ -1003,10 +974,10 @@ fn main() -> Result<(), slint::PlatformError> {
                 };
                 if let Some(t) = task {
                     let mut d = d_r.borrow_mut();
-                    let v   = d.day_tasks.entry(date_key(tgt_date)).or_default();
-                    let raw = if tgt_task < 0 { v.len() } else { (tgt_task as usize).min(v.len()) };
-                    let to  = clamp_to_zone(v, t.done, raw);
-                    v.insert(to, t);
+                    let key = date_key(tgt_date);
+                    let tgt = d.day_tasks.entry(key).or_default();
+                    let to  = (tgt_task as usize).min(tgt.len());
+                    tgt.insert(to, t);
                     save_and_record(&d, &fp_r.borrow(), &cfg_r, &us_r.borrow(), &low_r);
                 }
             }
@@ -1731,7 +1702,6 @@ fn main() -> Result<(), slint::PlatformError> {
             t.image_filenames.retain(|f| f.as_str() != filename.as_str());
         }
         save_and_record(&d, &fp_r.borrow(), &cfg_r, &us_r.borrow(), &low_r);
-        drop(d); // mutable borrow freigeben, bevor d_r.borrow() aufgerufen wird
         // Reload thumbnails in attachment dialog
         let d2 = d_r.borrow();
         let start2 = start_date(*off_r2.borrow());
@@ -1749,7 +1719,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let fnames_slint: Vec<slint::SharedString> = fnames_vec.iter()
             .map(|f| slint::SharedString::from(f.as_str()))
             .collect();
-        drop(d2);
+        drop(d2); drop(d);
         if let Some(ui2) = ui_w2.upgrade() {
             ui2.set_popup_thumbnails(slint::ModelRc::new(slint::VecModel::from(thumbs)));
             ui2.set_popup_thumbnail_filenames(slint::ModelRc::new(slint::VecModel::from(fnames_slint)));
@@ -1824,46 +1794,60 @@ fn main() -> Result<(), slint::PlatformError> {
         save_and_record(&d, &fp_r.borrow(), &cfg_r, &us_r.borrow(), &low_r); drop(d); rf();
     }); }
 
-    // quit-app button
+    // quit-app: Konfiguration speichern, dann Event-Loop beenden
     { let cfg_r = Rc::clone(&cfg);
       ui.on_quit_app(move || {
-        save_config(&cfg_r.borrow());   // cfg mit aktueller mtime persistieren
+        save_config(&cfg_r.borrow());
         slint::quit_event_loop().ok();
     }); }
 
-    // ════════════════════════════════════════════════════════════════════════
-    //  System Tray  (Windows: native winapi impl via tray_win module)
-    // ════════════════════════════════════════════════════════════════════════
-    //
-    //  Schlüssel: slint::run_event_loop_until_quit() statt ui.run().
-    //  Damit bleibt der Event-Loop aktiv auch wenn kein Fenster sichtbar ist.
-    //  HideWindow versteckt das Fenster; quit_event_loop() beendet die App.
+    // ── System Tray (Slint 1.17 nativ) ───────────────────────────────────────
+    // TuDuTray ist Root-Komponente (SystemTrayIcon muss Root sein, kein Child).
+    let tray = TuDuTray::new().expect("TuDuTray konnte nicht erstellt werden");
+    { let ui_w = ui.as_weak();
+      tray.on_show_app(move || {
+        if let Some(u) = ui_w.upgrade() { u.show().ok(); }
+    }); }
+    tray.on_quit_app(|| { slint::quit_event_loop().ok(); });
 
-    // X-Button → Fenster verstecken (Loop läuft weiter dank until_quit).
+    // X-Button → Fenster verstecken (Event-Loop läuft weiter dank until_quit)
     ui.window().on_close_requested(|| slint::CloseRequestResponse::HideWindow);
 
-    // Tray-Thread starten (no-op auf Nicht-Windows).
-    let tray_rx = {
-        let (rgba, w, h) = load_icon_rgba().unwrap_or_else(|| (vec![0u8; 4], 1, 1));
-        tray_win::spawn(rgba, w, h)
-    };
+    // ── Api-Global: Drag-Daten kodieren/dekodieren ───────────────────────────
+    // Slint 1.17 DragArea/DropArea nutzen data-transfer als Payload.
+    // Kodierung: "task_id|col|task_idx|list_idx|done" bzw. "list|list_idx"
+    { let api = Api::get(&ui);
+      // Hilfsclosure: DataTransfer → String
+      let txt = |dt: &slint::DataTransfer| -> String {
+          dt.plain_text().map(|s| s.to_string()).unwrap_or_default()
+      };
 
-    // Tray-Events pollen → Fenster zeigen oder App beenden.
-    let tray_timer = slint::Timer::default();
-    {
-        let ui_w = ui.as_weak();
-        tray_timer.start(TimerMode::Repeated, std::time::Duration::from_millis(150), move || {
-            while let Ok(ev) = tray_rx.try_recv() {
-                match ev {
-                    tray_win::TrayEvent::Show => {
-                        if let Some(ui) = ui_w.upgrade() { ui.show().ok(); }
-                    }
-                    tray_win::TrayEvent::Quit => {
-                        slint::quit_event_loop().ok();
-                    }
-                }
-            }
-        });
+      api.on_encode_task_drag(|task_id, col, task_idx, list_idx, done| {
+          slint::SharedString::from(
+              format!("{}|{}|{}|{}|{}", task_id, col, task_idx, list_idx, done as i32).as_str()
+          ).into()
+      });
+      api.on_encode_list_drag(|list_idx| {
+          slint::SharedString::from(format!("list|{}", list_idx).as_str()).into()
+      });
+      api.on_drag_task_id(move |dt| {
+          txt(&dt).split('|').next().unwrap_or("").into()
+      });
+      api.on_drag_src_col(move |dt| {
+          txt(&dt).split('|').nth(1).and_then(|x| x.parse::<i32>().ok()).unwrap_or(-1)
+      });
+      api.on_drag_src_task_idx(move |dt| {
+          txt(&dt).split('|').nth(2).and_then(|x| x.parse::<i32>().ok()).unwrap_or(-1)
+      });
+      api.on_drag_src_list_idx(move |dt| {
+          txt(&dt).split('|').nth(3).and_then(|x| x.parse::<i32>().ok()).unwrap_or(-1)
+      });
+      api.on_drag_task_done(move |dt| {
+          txt(&dt).split('|').nth(4).and_then(|x| x.parse::<i32>().ok()).unwrap_or(0) != 0
+      });
+      api.on_drag_list_idx(move |dt| {
+          txt(&dt).split('|').nth(1).and_then(|x| x.parse::<i32>().ok()).unwrap_or(-1)
+      });
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -2011,7 +1995,8 @@ fn main() -> Result<(), slint::PlatformError> {
 
     ui.show()?;
     // Timer am Leben halten bis zum Ende der Event-Loop
-    let _t1 = tray_timer; let _t2 = notif_timer; let _t3 = midnight_timer; let _t4 = watch_timer;
+    let _t1 = notif_timer; let _t2 = midnight_timer; let _t3 = watch_timer;
+    let _tray = tray; // TuDuTray am Leben halten
     slint::run_event_loop_until_quit()
 }
 

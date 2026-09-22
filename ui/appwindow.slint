@@ -82,27 +82,31 @@ global ColorOptions {
     ];
 }
 
-// ─── DragState ────────────────────────────────────────────────────────────────
+// ─── Api – Drag-Daten kodieren/dekodieren (Slint 1.17 data-transfer) ──────────
+export global Api {
+    // Kodierung: task-drag → "task_id|col|task_idx|list_idx|done"
+    pure callback encode-task-drag(string, int, int, int, bool) -> data-transfer;
+    // Kodierung: list-drag → "list|list_idx"
+    pure callback encode-list-drag(int) -> data-transfer;
+    // Dekodierung
+    pure callback drag-task-id(data-transfer) -> string;
+    pure callback drag-src-col(data-transfer) -> int;
+    pure callback drag-src-task-idx(data-transfer) -> int;
+    pure callback drag-src-list-idx(data-transfer) -> int;
+    pure callback drag-task-done(data-transfer) -> bool;
+    pure callback drag-list-idx(data-transfer) -> int;
+}
 
+// ─── DragState ────────────────────────────────────────────────────────────────
 export global DragState {
     in-out property <bool>   active:          false;
-    in-out property <string> task-id:         "";
-    in-out property <string> task-text:       "";
+    in-out property <string> task-id:         "";   // für TaskRow-Opacity
     in-out property <bool>   task-done:       false;
-    in-out property <int>    source-col:      -1;
-    in-out property <int>    source-list-idx: -1;
-    in-out property <int>    source-task-idx: -1;
-    in-out property <int>    target-task-idx: -1;
-    in-out property <int>    target-col:      -1;   // Welche Spalte ist aktuelles Drop-Ziel
-    in-out property <int>    target-list-idx: -1;   // Welche Someday-Liste ist Ziel
-    in-out property <length> cursor-x:        0px;
+    in-out property <int>    target-col:      -1;
+    in-out property <int>    target-list-idx: -1;
+    in-out property <int>    target-task-idx: 0;
     in-out property <length> cursor-y:        0px;
-    // Absolut-X der Quellspalte + Spaltenbreite (für target-col-Berechnung)
-    in-out property <length> col-left-x:      0px;
-    in-out property <length> col-width:       0px;
-    // Absolut-Y der Drop-Linie (gesetzt von TaskRow._cy)
-    in-out property <length> drop-line-y:      0px;
-    // Absolut-Y der Grenze unerledigt/erledigt (gesetzt vom Grenztask)
+    in-out property <length> drop-line-y:     0px;
     in-out property <length> zone-boundary-y: 100000px;
 }
 
@@ -111,9 +115,7 @@ global ListDragState {
     in-out property <bool>   active:      false;
     in-out property <int>    source-idx:  -1;
     in-out property <int>    target-idx:  0;
-    in-out property <length> cursor-x:    0px;
-    in-out property <length> cursor-y:    0px;
-    in-out property <length> drop-x:      0px;
+    in-out property <length> drop-x:     0px;
 }
 
 // ─── HdrBtn ──────────────────────────────────────────────────────────────────
@@ -316,7 +318,7 @@ component TaskRow inherits Rectangle {
 
     property <bool> editing: editing-id == task.id && task.id != "";
     property <string> edit-text: "";
-    property <bool> hovering: (ta.has-hover || date-ta.has-hover || grip-ta.has-hover || overlay-ta.has-hover) && !grip-ta.drag-mode;
+    property <bool> hovering: (ta.has-hover || date-ta.has-hover || overlay-ta.has-hover) && !DragState.active;
     // show-overlay: Zustandsvariable (kein reaktives Binding → keine Zirkularität).
     // Wird true durch date-ta.changed has-hover, false durch overlay-ta.changed has-hover.
     property <bool> show-overlay: false;
@@ -336,8 +338,6 @@ component TaskRow inherits Rectangle {
     }
 
     // ── Zone-Grenze tracken ───────────────────────────────────────────────────
-    // Wenn dieser Task die Grenze zw. unerledigt/erledigt ist, merken wir uns
-    // seine absolute Y-Position in DragState.zone-boundary-y.
     property <bool> tracking-zone: DragState.active && root.is-zone-boundary;
     changed tracking-zone => {
         if tracking-zone {
@@ -346,11 +346,7 @@ component TaskRow inherits Rectangle {
     }
 
     // ── Drop-Target-Berechnung via _cy ─────────────────────────────────────────
-    // _cy reagiert auf jede cursor-y-Änderung.
-    // Jeder Task prüft: ist cursor >= mein abs-y?
-    // Slint verarbeitet Elemente in Dokumentreihenfolge (Task 0 → N).
-    // Der LETZTE Task dessen abs-y <= cursor-y überschreibt zuletzt → korrekter Index.
-    // Kein Teilen durch feste Höhe – funktioniert mit beliebig hohen Tasks.
+    // Wird von DropArea in DayColumn und SomedayCard gesetzt.
     property <length> _cy: DragState.cursor-y;
     changed _cy => {
         if DragState.active && DragState.task-id != task.id {
@@ -364,9 +360,9 @@ component TaskRow inherits Rectangle {
                     DragState.drop-line-y     = ta.absolute-position.y;
                 }
             }
-            // ── Someday-Liste (gleiche Liste, Umsortierung) ───────────────────
+            // ── Someday-Liste (Ziel-Liste = source-list-idx) ─────────────────
             if root.col-index < 0 && root.source-list-idx >= 0
-               && root.source-list-idx == DragState.source-list-idx {
+               && root.source-list-idx == DragState.target-list-idx {
                 if DragState.cursor-y >= ta.absolute-position.y {
                     DragState.target-task-idx = root.task-idx + 1;
                     DragState.drop-line-y     = ta.absolute-position.y + root.height;
@@ -424,7 +420,7 @@ component TaskRow inherits Rectangle {
         pointer-event(e) => {
             if (e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel)
                && e.button == PointerEventButton.left
-               && !grip-ta.drag-mode {
+               && !DragState.active {
                 if self.mouse-x >= 24px && self.mouse-x < 54px {
                     if root.editing { root.stop-editing(); }
                     root.toggled();
@@ -458,7 +454,7 @@ component TaskRow inherits Rectangle {
             width: 24px; horizontal-stretch: 0;
             // 6 Punkte: 2 Spalten × 3 Reihen, je 3×3px, Abstand 2.5px
             // Gesamt: B=8.5px H=14px, zentriert in 24px
-            property <color> dot-color: grip-ta.has-hover ? Theme.ink-muted : Theme.ink-ghost;
+            property <color> dot-color: Theme.ink-ghost;
             // Reihe 0
             Rectangle { width:3px; height:3px; border-radius:1.5px; background: parent.dot-color;
                         x: 7.75px; y: (parent.height - 14px) / 2; }
@@ -610,7 +606,7 @@ component TaskRow inherits Rectangle {
             pointer-event(e) => {
                 if (e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel)
                    && e.button == PointerEventButton.left
-                   && !grip-ta.drag-mode {
+                   && !DragState.active {
                     if task.done {
                         root.deleted();
                     } else if self.mouse-x >= 87px {
@@ -682,62 +678,20 @@ component TaskRow inherits Rectangle {
         }
     }
 
-    // grip-ta: letzte deklariert = höchste Z-Order im linken 24px-Bereich.
-    // Übernimmt ALLE Drag-Events (ta ist dort nicht zuständig).
-    grip-ta := TouchArea {
+    // ── DragArea (Slint 1.17) – ersetzt den manuellen grip-ta ────────────────
+    // Deckt den linken 24px-Greifbereich ab. Payload: task-Daten kodiert als String.
+    DragArea {
         x: 0; y: 0; width: 24px; height: root.height;
-
-        property <bool>   drag-mode: false;
-        property <length> press-x:   0px;
-        property <length> press-y:   0px;
-
-        pointer-event(e) => {
-            if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {
-                self.press-x   = self.mouse-x;
-                self.press-y   = self.mouse-y;
-                self.drag-mode = false;
-            }
-            if (e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel)
-               && e.button == PointerEventButton.left && self.drag-mode {
-                self.drag-mode = false;
-                root.drag-dropped();
-            }
-        }
-
-        moved => {
-            if self.pressed && !self.drag-mode {
-                if abs(self.mouse-x - self.press-x) > 5px
-                   || abs(self.mouse-y - self.press-y) > 5px {
-                    self.drag-mode            = true;
-                    DragState.active          = true;
-                    DragState.task-id         = root.task.id;
-                    DragState.task-text       = root.task.text;
-                    DragState.task-done       = root.task.done;
-                    DragState.source-col      = root.col-index;
-                    DragState.source-list-idx = root.source-list-idx;
-                    DragState.source-task-idx = root.task-idx;
-                    DragState.target-task-idx = root.task-idx;
-                    DragState.target-col      = root.col-index;
-                    DragState.target-list-idx = root.source-list-idx;
-                    DragState.zone-boundary-y = 100000px;
-                    DragState.drop-line-y     = grip-ta.absolute-position.y;
-                    DragState.col-left-x      = grip-ta.absolute-position.x;
-                    DragState.col-width       = root.width;
-                }
-            }
-            if self.pressed && self.drag-mode {
-                if root.col-index >= 0 {
-                    DragState.target-col = max(0, min(6, root.col-index +
-                        floor(((grip-ta.absolute-position.x + self.mouse-x) - DragState.col-left-x)
-                              / DragState.col-width)));
-                } else {
-                    DragState.target-col = max(0, min(6,
-                        floor(((grip-ta.absolute-position.x + self.mouse-x) - root.days-col-left-x)
-                              / root.days-col-width)));
-                }
-                DragState.target-task-idx = 0;
-                DragState.cursor-x        = grip-ta.absolute-position.x + self.mouse-x;
-                DragState.cursor-y        = grip-ta.absolute-position.y + self.mouse-y;
+        data: Api.encode-task-drag(task.id, root.col-index, root.task-idx,
+                                   root.source-list-idx, task.done);
+        allow-move: true;
+        drag-finished(result) => {
+            // Drag abgebrochen (kein Drop) → State zurücksetzen
+            if result == DragAction.none {
+                DragState.active          = false;
+                DragState.task-id         = "";
+                DragState.target-col      = -1;
+                DragState.target-list-idx = -1;
             }
         }
     }
@@ -867,7 +821,7 @@ component DayColumn inherits Rectangle {
     callback toggle-task(int, string);
     callback delete-task(int, string);
     callback rename-task(int, string, string);
-    callback task-drag-dropped();
+    callback task-drag-dropped(string, int, int, int, int, int);
     callback set-task-due(int, string);
     callback task-due-cleared(int, string);
     callback task-time-cleared(int, string);
@@ -902,7 +856,7 @@ component DayColumn inherits Rectangle {
             is-zone-boundary: task-idx == day.undone-count;
             toggled        => { root.toggle-task(root.col-index, task.id); }
             deleted        => { root.delete-task(root.col-index, task.id); }
-            drag-dropped   => { root.task-drag-dropped(); }
+            drag-dropped   => { /* handled by DayColumn DropArea */ }
             set-due        => { root.set-task-due(root.col-index, task.id); }
             due-cleared    => { root.task-due-cleared(root.col-index, task.id); }
             time-cleared      => { root.task-time-cleared(root.col-index, task.id); }
@@ -994,7 +948,36 @@ component DayColumn inherits Rectangle {
         background: #00000010;
     }
 
-
+    // ── DropArea (Slint 1.17) – nimmt gezogene Tasks an ────────────────────
+    day-drop := DropArea {
+        x: 0; y: 0; width: parent.width; height: parent.height;
+        can-drop(event) => {
+            // Nur Task-Drags annehmen (nicht List-Drags)
+            if Api.drag-src-col(event.data) >= -1 && Api.drag-task-id(event.data) != "" {
+                DragState.active          = true;
+                DragState.task-id         = Api.drag-task-id(event.data);
+                DragState.task-done       = Api.drag-task-done(event.data);
+                DragState.target-col      = root.col-index;
+                DragState.target-list-idx = -1;
+                DragState.cursor-y        = day-drop.absolute-position.y + event.position.y;
+                DragAction.move
+            } else {
+                DragAction.none
+            }
+        }
+        dropped(event) => {
+            DragState.active = false;
+            root.task-drag-dropped(
+                Api.drag-task-id(event.data),
+                Api.drag-src-col(event.data),
+                Api.drag-src-task-idx(event.data),
+                root.col-index,
+                DragState.target-task-idx,
+                Api.drag-src-list-idx(event.data) >= 0 ? Api.drag-src-list-idx(event.data) : -1
+            );
+            return DragAction.move;
+        }
+    }
 }
 // ─── SomedayListCard ─────────────────────────────────────────────────────────
 
@@ -1015,7 +998,7 @@ component SomedayListCard inherits Rectangle {
     callback toggle-someday-task(int, string);
     callback delete-someday-task(int, string);
     callback rename-someday-task(int, string, string);
-    callback someday-task-drag-dropped();
+    callback someday-task-drag-dropped(string, int, int, int, int);
     callback set-someday-task-due(int, string);
     callback someday-due-cleared(int, string);   // list-idx, id
     callback someday-time-cleared(int, string); // list-idx, id
@@ -1028,7 +1011,7 @@ component SomedayListCard inherits Rectangle {
     callback open-someday-note(int, string);
     callback someday-image-file-dropped(int, string, string);
     callback set-someday-task-color(int, string, string);   // list-idx, id, hex
-    callback list-drag-dropped();
+    callback list-drag-dropped(int, int); // src-idx, tgt-idx
 
     width: 232px; min-height: 120px;
     border-radius: 8px; border-width: 1px; border-color: Theme.border;
@@ -1042,39 +1025,16 @@ component SomedayListCard inherits Rectangle {
     // Positions-Referenz für absolute-position (enabled:false = kein Event-Konsum)
     list-pos-ta := TouchArea { x: 0; y: 0; width: parent.width; height: parent.height; enabled: false; }
 
-    // Reaktiv auf cursor-x: jede Karte setzt target-idx wenn Cursor sie passiert hat.
-    // Letzte Karte mit abs-x <= cursor-x gewinnt (links→rechts Dokumentreihenfolge).
-    property <length> _lcx: ListDragState.cursor-x;
-    changed _lcx => {
-        if ListDragState.active {
-            if ListDragState.cursor-x >= list-pos-ta.absolute-position.x {
-                ListDragState.target-idx = root.list-index + 1;
-                ListDragState.drop-x = list-pos-ta.absolute-position.x + root.width + 6px;
-            }
-            if root.list-index == 0
-               && ListDragState.cursor-x < list-pos-ta.absolute-position.x + root.width / 2 {
-                ListDragState.target-idx = 0;
-                ListDragState.drop-x = list-pos-ta.absolute-position.x - 6px;
-            }
-        }
+    // Reaktiv auf ListDragState.target-idx (von DropArea in Karten gesetzt)
+    property <int> _ltgt: ListDragState.target-idx;
+    changed _ltgt => {
+        // drop-x wird direkt in der DropArea gesetzt
     }
 
-    // Someday Drop-Linie:
-    // - Gleiche Liste (source-list-idx == list-index): drop-line-y von _cy (snapped auf Task-Grenzen)
-    // - Andere Liste / Tag→Someday: cursor-y (kein Snap nötig)
-    // Cap: nie unterhalb der Task-Liste, d.h. max = card.height - 34px ("Aufgabe hinzufügen"-Zeile)
-    if DragState.active
-       && DragState.cursor-x >= root.absolute-position.x
-       && DragState.cursor-x < root.absolute-position.x + root.width
-       && DragState.cursor-y >= root.absolute-position.y
-       && DragState.cursor-y < root.absolute-position.y + root.height: Rectangle {
-        property <length> line-abs-y:
-            DragState.source-list-idx == root.list-index
-                ? DragState.drop-line-y                     // gleiche Liste: snapped
-                : DragState.cursor-y;                       // cross-context: cursor
-        property <length> rel-y: line-abs-y - root.absolute-position.y;
+    // Someday Drop-Linie – zeigt wenn diese Liste das aktuelle Drop-Ziel ist
+    if DragState.active && DragState.target-list-idx == root.list-index: Rectangle {
+        property <length> rel-y: DragState.drop-line-y - root.absolute-position.y;
         x: 8px;
-        // max(44px): nie im Header | min(root.height-34px): nie in "Aufgabe hinzufügen"-Zeile
         y: max(44px, min(root.height - 34px, rel-y)) - 1px;
         width: root.width - 16px; height: 2px;
         background: Theme.drop-line;
@@ -1105,7 +1065,7 @@ component SomedayListCard inherits Rectangle {
             // Grip: 6 Punkte (2×3), identisch zu TaskRow
             Rectangle {
                 x: 4px; y: 0; width: 24px; height: parent.height;
-                property <color> dot-c: list-grip-ta.has-hover ? #ffffffb0 : #ffffff40;
+                property <color> dot-c: #ffffff40;
                 Rectangle { width:3px; height:3px; border-radius:1.5px; background: parent.dot-c;
                             x: 7.75px; y: (parent.height - 14px) / 2; }
                 Rectangle { width:3px; height:3px; border-radius:1.5px; background: parent.dot-c;
@@ -1186,38 +1146,14 @@ component SomedayListCard inherits Rectangle {
             }
 
             // Grip-TouchArea: höchste Z-Order in hdr-rect, konsumiert Grip-Events
-            list-grip-ta := TouchArea {
+            // ── DragArea für Listen-Reordering (Slint 1.17) ──────────────────
+            DragArea {
                 x: 0; y: 0; width: 28px; height: parent.height;
-                property <bool>   drag-mode: false;
-                property <length> press-x:   0px;
-                property <length> press-y:   0px;
-                pointer-event(e) => {
-                    if e.kind == PointerEventKind.down && e.button == PointerEventButton.left {
-                        self.press-x = self.mouse-x;
-                        self.press-y = self.mouse-y;
-                        self.drag-mode = false;
-                    }
-                    if (e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel)
-                       && e.button == PointerEventButton.left && self.drag-mode {
-                        self.drag-mode       = false;
+                data: Api.encode-list-drag(root.list-index);
+                allow-move: true;
+                drag-finished(result) => {
+                    if result == DragAction.none {
                         ListDragState.active = false;
-                        root.list-drag-dropped();
-                    }
-                }
-                moved => {
-                    if self.pressed && !self.drag-mode {
-                        if abs(self.mouse-x - self.press-x) > 5px
-                           || abs(self.mouse-y - self.press-y) > 5px {
-                            self.drag-mode           = true;
-                            ListDragState.active     = true;
-                            ListDragState.source-idx = root.list-index;
-                            ListDragState.target-idx = root.list-index;
-                            ListDragState.drop-x     = list-pos-ta.absolute-position.x + root.width + 6px;
-                        }
-                    }
-                    if self.pressed && self.drag-mode {
-                        ListDragState.cursor-x = list-grip-ta.absolute-position.x + self.mouse-x;
-                        ListDragState.cursor-y = list-grip-ta.absolute-position.y + self.mouse-y;
                     }
                 }
             }
@@ -1240,7 +1176,7 @@ component SomedayListCard inherits Rectangle {
                     days-col-width:  root.days-col-width;
                     toggled        => { root.toggle-someday-task(root.list-index, task.id); }
                     deleted        => { root.delete-someday-task(root.list-index, task.id); }
-                    drag-dropped   => { root.someday-task-drag-dropped(); }
+                    drag-dropped   => { /* handled by SomedayListCard DropArea */ }
                     set-due        => { root.set-someday-task-due(root.list-index, task.id); }
                     due-cleared    => { root.someday-due-cleared(root.list-index, task.id); }
                     time-cleared   => { root.someday-time-cleared(root.list-index, task.id); }
@@ -1317,6 +1253,58 @@ component SomedayListCard inherits Rectangle {
                 }
             }
             } // end wrapper Rectangle
+        }
+    }
+
+    // ── DropAreas (Slint 1.17) ─────────────────────────────────────────────
+    // Task-Drop (day/someday → diese Liste)
+    sd-task-drop := DropArea {
+        x: 0; y: 40px; width: parent.width; height: parent.height - 40px;
+        can-drop(event) => {
+            if Api.drag-task-id(event.data) != "" {
+                DragState.active          = true;
+                DragState.task-id         = Api.drag-task-id(event.data);
+                DragState.task-done       = Api.drag-task-done(event.data);
+                DragState.target-list-idx = root.list-index;
+                DragState.target-col      = -1;
+                DragState.cursor-y        = sd-task-drop.absolute-position.y + event.position.y;
+                DragAction.move
+            } else { DragAction.none }
+        }
+        dropped(event) => {
+            DragState.active = false;
+            root.someday-task-drag-dropped(
+                Api.drag-task-id(event.data),
+                Api.drag-src-list-idx(event.data),
+                DragState.target-task-idx,
+                root.list-index,
+                Api.drag-src-col(event.data)
+            );
+            return DragAction.move;
+        }
+    }
+    // Listen-Drop (Reordering der SomedayListCards)
+    sd-list-drop := DropArea {
+        x: 0; y: 0; width: parent.width; height: 40px; // nur Header-Bereich
+        can-drop(event) => {
+            if Api.drag-list-idx(event.data) >= 0 {
+                ListDragState.active = true;
+                ListDragState.source-idx = Api.drag-list-idx(event.data);
+                // Cursor rechts von Kartenmitte → nach dieser Karte einfügen
+                if event.position.x > parent.width / 2 {
+                    ListDragState.target-idx = root.list-index + 1;
+                    ListDragState.drop-x     = sd-list-drop.absolute-position.x + parent.width + 6px;
+                } else {
+                    ListDragState.target-idx = root.list-index;
+                    ListDragState.drop-x     = sd-list-drop.absolute-position.x - 6px;
+                }
+                DragAction.move
+            } else { DragAction.none }
+        }
+        dropped(event) => {
+            ListDragState.active = false;
+            root.list-drag-dropped(Api.drag-list-idx(event.data), ListDragState.target-idx);
+            return DragAction.move;
         }
     }
 }
@@ -1624,12 +1612,6 @@ export component AppWindow inherits Window {
     in-out property <int>  today-hour:   0;
     in-out property <int>  today-minute: 0;
 
-    out property <float> drag-target-col-f:
-        max(0.0, min(6.0, DragState.cursor-x / self.width * 7.0));
-    out property <float> drag-target-someday-idx-f:
-        DragState.cursor-y >= someday-rect.absolute-position.y
-        ? max(0.0, (DragState.cursor-x - 16px) / 232px) : -1.0;
-
     // ── Standard callbacks ────────────────────────────────────────────────
     callback add-task(int, string);
     callback toggle-task(int, string);
@@ -1645,14 +1627,15 @@ export component AppWindow inherits Window {
     callback rename-someday-list(int, string);
     callback delete-someday-list(int);
     callback reorder-someday-list(int, int);
-    callback task-drag-dropped();
-    callback someday-task-drag-dropped();
+    callback task-drag-dropped(string, int, int, int, int, int);
+    callback someday-task-drag-dropped(string, int, int, int, int);
     callback toggle-hide-done();
     callback undo();
     callback redo();
     callback delete-all-done();
     callback change-data-path();
     callback quit-app();
+    callback show-app();   // aus dem Tray-Menü
     callback set-task-due(int, int, string);     // col, list-idx, id
     callback rename-task(int, int, string, string); // col, list-idx, id, text
     callback attach-image(int, int, string);
@@ -1860,7 +1843,7 @@ export component AppWindow inherits Window {
                             toggle-task(idx, id)    => { root.toggle-task(idx, id); }
                             delete-task(idx, id)    => { root.delete-task(idx, id); }
                             rename-task(idx, id, t) => { root.rename-task(idx, -1, id, t); }
-                            task-drag-dropped       => { root.task-drag-dropped(); }
+                            task-drag-dropped(a,b,c,d,e,f) => { root.task-drag-dropped(a,b,c,d,e,f); }
                             set-task-due(idx, id)   => { root.set-task-due(idx, -1, id); }
                             task-due-cleared(idx, id)  => { root.due-cleared-for(idx, -1, id); }
                             task-time-cleared(idx, id)     => { root.clear-time-for(idx, -1, id); }
@@ -1948,18 +1931,17 @@ export component AppWindow inherits Window {
                             days-list-top-y:                days-rect.absolute-position.y + 54px + 4px;
                             days-col-left-x:                days-rect.absolute-position.x;
                             days-col-width:                 days-rect.width / 7;
-                            add-someday-task(idx, text)     => { root.add-someday-task(idx, text); }
                             toggle-someday-task(idx, id)    => { root.toggle-someday-task(idx, id); }
                             delete-someday-task(idx, id)    => { root.delete-someday-task(idx, id); }
                             rename-someday-task(idx, id, t) => { root.rename-task(-1, idx, id, t); }
-                            someday-task-drag-dropped       => { root.someday-task-drag-dropped(); }
+                            someday-task-drag-dropped(a,b,c,d,e) => { root.someday-task-drag-dropped(a,b,c,d,e); }
                             set-someday-task-due(idx, id)   => { root.set-task-due(-1, idx, id); }
                             someday-due-cleared(idx, id)    => { root.due-cleared-for(-1, idx, id); }
                             someday-time-cleared(idx, id)   => { root.clear-time-for(-1, idx, id); }
                             open-someday-note(idx, id)      => { root.open-note(-1, idx, id); }
                             rename-list(idx, t)             => { root.rename-someday-list(idx, t); }
                             delete-list(idx)                => { root.delete-someday-list(idx); }
-                            list-drag-dropped               => { root.reorder-someday-list(ListDragState.source-idx, ListDragState.target-idx); }
+                            list-drag-dropped(src,tgt) => { root.reorder-someday-list(src, tgt); }
                             start-editing(id)               => {
                                 root.editing-task-id = id;
                                 root.hovered-task-col = -1;
@@ -1993,59 +1975,7 @@ export component AppWindow inherits Window {
 
     // ── Task-Drop-Overlay (AppWindow-Ebene) ──────────────────────────────────
     // Bedeckt den Task-Bereich (unterhalb der 54px-Header).
-    // Liegt auf AppWindow-Ebene → kein Binding-Loop mit days-rect.height.
-    if DragState.active: drop-overlay-rect := TouchArea {
-        x: days-rect.absolute-position.x;
-        y: days-rect.absolute-position.y + 54px;
-        width: days-rect.width;
-        height: days-rect.height - 54px;
-        moved => {
-            DragState.target-col      = max(0, min(6, floor(self.mouse-x / (self.width / 7))));
-            DragState.target-task-idx = 0;
-            DragState.drop-line-y     = self.absolute-position.y + self.mouse-y;
-            DragState.cursor-x        = self.absolute-position.x + self.mouse-x;
-            DragState.cursor-y        = self.absolute-position.y + self.mouse-y;
-        }
-        pointer-event(e) => {
-            if e.kind == PointerEventKind.up && DragState.active {
-                DragState.active = false;
-                root.task-drag-dropped();
-            }
-            if e.kind == PointerEventKind.cancel { DragState.active = false; }
-        }
-    }
-
-        // ── Drag ghost overlay ───────────────────────────────────────────────
-    if DragState.active: Rectangle {
-        x: 0; y: 0; width: root.width; height: root.height; background: transparent;
-        Rectangle {
-            x: DragState.cursor-x + 14px; y: DragState.cursor-y - 17px;
-            width: 200px; height: 34px; background: Theme.surface;
-            border-radius: 6px; border-width: 1px; border-color: Theme.border;
-            drop-shadow-blur: 20px; drop-shadow-offset-x: 0px; drop-shadow-offset-y: 6px;
-            drop-shadow-color: #00000022;
-            HorizontalLayout {
-                padding-left: 10px; padding-right: 10px; spacing: 8px;
-                // Äußerer Container streckt sich vertikal → innerer Kreis kann zentriert werden
-                Rectangle {
-                    width: 13px; horizontal-stretch: 0;
-                    Rectangle {
-                        width: 13px; height: 13px;
-                        y: (parent.height - 13px) / 2;
-                        border-radius: 6.5px; border-width: 1.5px;
-                        border-color: DragState.task-done ? Theme.accent : Theme.ink-ghost;
-                        background: transparent;
-                        Image { source: @image-url("../assets/icons/check.svg"); visible: DragState.task-done; width: 8px; height: 8px;
-                               horizontal-alignment: center; vertical-alignment: center; }
-                    }
-                }
-                Text { text: DragState.task-text; font-size: 13px; overflow: elide;
-                       vertical-alignment: center;
-                       color: DragState.task-done ? Theme.done-ink : Theme.ink;
-                       font-italic: DragState.task-done; horizontal-stretch: 1; }
-            }
-        }
-    }
+    // Drag-Ghost und Overlay werden von Slint 1.17 DragArea nativ gehandhabt.
 
     // ── Tag-Spalten Drop-Linie ───────────────────────────────────────────────
     // drop-line-y ist eine absolute Screen-Y-Koordinate (von TaskRow._cy gesetzt).
@@ -2833,22 +2763,20 @@ export component AppWindow inherits Window {
                             background: Theme.hover-bg;
                             animate border-color { duration: 80ms; }
                             note-scv := ScrollView {
-                                width: parent.width;
-                                height: parent.height;
+                                x: 0; y: 0; width: parent.width; height: parent.height;
                                 viewport-width: self.width - 20px;
-                                viewport-height: note-input.preferred-height + 16px;
+                                viewport-height: max(self.height, note-input.preferred-height + 16px);
                                 note-input := TextInput {
+                                    x: 10px; y: 8px;
                                     width: parent.viewport-width;
-                                    height: parent.viewport-height;
+                                    height: max(parent.viewport-height, self.preferred-height + 16px);
                                     single-line: false; wrap: word-wrap;
                                     font-size: 14px; color: Theme.ink;
                                     text <=> root.note-editor-text;
                                     cursor-position-changed(cpos) => {
-                                        // Cursor oben raus → nach oben scrollen
                                         if cpos.y + note-scv.viewport-y < 4px {
                                             note-scv.viewport-y = -cpos.y + 4px;
                                         }
-                                        // Cursor unten raus → nach unten scrollen
                                         if cpos.y + note-scv.viewport-y > note-scv.height - 24px {
                                             note-scv.viewport-y = -(cpos.y - note-scv.height + 24px);
                                         }
@@ -3015,22 +2943,20 @@ export component AppWindow inherits Window {
                         // Prev/Next navigation
                         HorizontalLayout { spacing: 2px;
                             full-prev := TouchArea { width: 36px; height: 36px;
-                                // Kein enabled:false – sonst fallen Klicks zum Backdrop durch!
+                                enabled: root.full-image-idx > 0;
                                 Rectangle {
                                     border-radius: 5px;
-                                    background: full-prev.has-hover && root.full-image-idx > 0 ? #ffffff22 : transparent;
+                                    background: full-prev.has-hover && full-prev.enabled ? #ffffff22 : transparent;
                                     animate background { duration: 60ms; }
                                     Image { source: @image-url("../assets/icons/prev-white.svg");
                                            width: 18px; height: 18px;
                                            horizontal-alignment: center; vertical-alignment: center;
-                                           opacity: root.full-image-idx > 0 ? 1.0 : 0.3; }
+                                           opacity: full-prev.enabled ? 1.0 : 0.3; }
                                 }
                                 clicked => {
-                                    if root.full-image-idx > 0 {
-                                        root.full-image-idx = root.full-image-idx - 1;
-                                        root.full-image = root.popup-thumbnails[root.full-image-idx];
-                                        root.full-image-filename = root.popup-thumbnail-filenames[root.full-image-idx];
-                                    }
+                                    root.full-image-idx = root.full-image-idx - 1;
+                                    root.full-image = root.popup-thumbnails[root.full-image-idx];
+                                    root.full-image-filename = root.popup-thumbnail-filenames[root.full-image-idx];
                                 }
                             }
                             Text {
@@ -3040,22 +2966,20 @@ export component AppWindow inherits Window {
                                 width: 50px;
                             }
                             full-next := TouchArea { width: 36px; height: 36px;
-                                // Kein enabled:false – sonst fallen Klicks zum Backdrop durch!
+                                enabled: root.full-image-idx < root.popup-thumbnails.length - 1;
                                 Rectangle {
                                     border-radius: 5px;
-                                    background: full-next.has-hover && root.full-image-idx < root.popup-thumbnails.length - 1 ? #ffffff22 : transparent;
+                                    background: full-next.has-hover && full-next.enabled ? #ffffff22 : transparent;
                                     animate background { duration: 60ms; }
                                     Image { source: @image-url("../assets/icons/next-white.svg");
                                            width: 18px; height: 18px;
                                            horizontal-alignment: center; vertical-alignment: center;
-                                           opacity: root.full-image-idx < root.popup-thumbnails.length - 1 ? 1.0 : 0.3; }
+                                           opacity: full-next.enabled ? 1.0 : 0.3; }
                                 }
                                 clicked => {
-                                    if root.full-image-idx < root.popup-thumbnails.length - 1 {
-                                        root.full-image-idx = root.full-image-idx + 1;
-                                        root.full-image = root.popup-thumbnails[root.full-image-idx];
-                                        root.full-image-filename = root.popup-thumbnail-filenames[root.full-image-idx];
-                                    }
+                                    root.full-image-idx = root.full-image-idx + 1;
+                                    root.full-image = root.popup-thumbnails[root.full-image-idx];
+                                    root.full-image-filename = root.popup-thumbnail-filenames[root.full-image-idx];
                                 }
                             }
                         }
@@ -3129,4 +3053,18 @@ export component AppWindow inherits Window {
     }
 
 
+}
+
+// ─── TuDuTray – System Tray Icon (Slint 1.17) ────────────────────────────────
+// SystemTrayIcon muss Root einer exportierten Komponente sein.
+export component TuDuTray inherits SystemTrayIcon {
+    icon: @image-url("../assets/icon.png");
+    tooltip: "TuDu";
+    callback show-app();
+    callback quit-app();
+    Menu {
+        MenuItem { title: "TuDu anzeigen"; activated => { root.show-app(); } }
+        MenuSeparator { }
+        MenuItem { title: "Beenden"; activated => { root.quit-app(); } }
+    }
 }
