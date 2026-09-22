@@ -5,7 +5,7 @@ edition = "2021"
 description = "TuDu – lokale Aufgabenverwaltung mit Slint"
 
 [dependencies]
-slint       = { version = "1.17", features = ["gettext"] }
+slint       = { version = "1.18.1", features = ["gettext"] }
 serde       = { version = "1", features = ["derive"] }
 serde_json  = "1"
 chrono      = { version = "0.4", features = ["serde"] }
@@ -21,7 +21,7 @@ winapi = { version = "0.3", features = [
 ] }
 
 [build-dependencies]
-slint-build = "1.17"
+slint-build = "1.18.1"
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"

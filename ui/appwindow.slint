@@ -82,7 +82,7 @@ global ColorOptions {
     ];
 }
 
-// ─── Api – Drag-Daten kodieren/dekodieren (Slint 1.17 data-transfer) ──────────
+// ─── Api – Drag-Daten kodieren/dekodieren (Slint 1.18 data-transfer) ──────────
 export global Api {
     // Kodierung: task-drag → "task_id|col|task_idx|list_idx|done"
     pure callback encode-task-drag(string, int, int, int, bool) -> data-transfer;
@@ -678,7 +678,7 @@ component TaskRow inherits Rectangle {
         }
     }
 
-    // ── DragArea (Slint 1.17) – ersetzt den manuellen grip-ta ────────────────
+    // ── DragArea (Slint 1.18) – ersetzt den manuellen grip-ta ────────────────
     // Deckt den linken 24px-Greifbereich ab. Payload: task-Daten kodiert als String.
     DragArea {
         x: 0; y: 0; width: 24px; height: root.height;
@@ -948,7 +948,7 @@ component DayColumn inherits Rectangle {
         background: #00000010;
     }
 
-    // ── DropArea (Slint 1.17) – nimmt gezogene Tasks an ────────────────────
+    // ── DropArea (Slint 1.18) – nimmt gezogene Tasks an ────────────────────
     day-drop := DropArea {
         x: 0; y: 0; width: parent.width; height: parent.height;
         can-drop(event) => {
@@ -1146,7 +1146,7 @@ component SomedayListCard inherits Rectangle {
             }
 
             // Grip-TouchArea: höchste Z-Order in hdr-rect, konsumiert Grip-Events
-            // ── DragArea für Listen-Reordering (Slint 1.17) ──────────────────
+            // ── DragArea für Listen-Reordering (Slint 1.18) ──────────────────
             DragArea {
                 x: 0; y: 0; width: 28px; height: parent.height;
                 data: Api.encode-list-drag(root.list-index);
@@ -1161,8 +1161,8 @@ component SomedayListCard inherits Rectangle {
         sd-scv := ScrollView {
             vertical-scrollbar-policy: as-needed; horizontal-scrollbar-policy: always-off;
             min-height: 80px; max-height: 300px;
-            // viewport-height = max(Inhalt, sichtbarer Bereich). self = sd-scv.
-            viewport-height: max(sd-task-vl.preferred-height, self.height);
+            // content-height = max(Inhalt, sichtbarer Bereich). self = sd-scv.
+            content-height: max(sd-task-vl.preferred-height, self.height);
             Rectangle {
                 width: root.width;
             sd-task-vl := VerticalLayout {
@@ -1256,7 +1256,7 @@ component SomedayListCard inherits Rectangle {
         }
     }
 
-    // ── DropAreas (Slint 1.17) ─────────────────────────────────────────────
+    // ── DropAreas (Slint 1.18) ─────────────────────────────────────────────
     // Task-Drop (day/someday → diese Liste)
     sd-task-drop := DropArea {
         x: 0; y: 40px; width: parent.width; height: parent.height - 40px;
@@ -1542,7 +1542,7 @@ export component AppWindow inherits Window {
             root.editing-task-id = "";
             root.editing-list-idx = -1;
         }
-        // Datei-DnD: nicht unterstützt in Slint 1.15, nur über 📎-Dateidialog
+        // Datei-DnD: nur über 📎-Dateidialog; Slint 1.18 bleibt kompatibel
     }
 
     // Tastatur-Shortcuts (Strg+Z = Undo, Strg+Y / Strg+Shift+Z = Redo)
@@ -1811,9 +1811,9 @@ export component AppWindow inherits Window {
 
             // ── Einziger ScrollView; Header UND Tasks drin ────────────────
             // Damit haben Header-Zellen und Task-Spalten IMMER die gleiche Breite:
-            // beide sind Kinder desselben Viewports → identische viewport-width,
+            // beide sind Kinder desselben Viewports → identische content-width,
             // unabhängig davon ob der Scrollbalken gerade sichtbar ist oder nicht.
-            // Header klebt via  y: -days-scv.viewport-y  am sichtbaren oberen Rand
+            // Header klebt via  y: -days-scv.content-y  am sichtbaren oberen Rand
             // (sticky positioning ohne separate Layout-Ebene).
             days-scv := ScrollView {
                 x: 0; y: 0;
@@ -1821,10 +1821,10 @@ export component AppWindow inherits Window {
                 height: parent.height;
                 vertical-scrollbar-policy: as-needed;
                 horizontal-scrollbar-policy: always-off;
-                // viewport-height treibt den Scrollbalken.
+                // content-height treibt den Scrollbalken.
                 // col-hl.preferred-height hängt nur von Task-Daten ab → kein Loop.
                 // self.height = days-rect.height (stabil) → kein Loop.
-                viewport-height: max(54px + col-hl.preferred-height, self.height);
+                content-height: max(54px + col-hl.preferred-height, self.height);
 
                 Rectangle {
                     width:  parent.width;
@@ -1871,7 +1871,7 @@ export component AppWindow inherits Window {
                     // Breite = Rectangle.width = Viewport-Breite (Scrollbalken bereits abgezogen).
                     // So sind Header-Zellen und Task-Spalten garantiert gleich breit.
                     header-hl := HorizontalLayout {
-                        y: -days-scv.viewport-y;
+                        y: -days-scv.content-y;
                         height: 54px;
                         for day[col-idx] in root.days: Rectangle {
                             width: days-rect.width / 7;
@@ -1975,7 +1975,7 @@ export component AppWindow inherits Window {
 
     // ── Task-Drop-Overlay (AppWindow-Ebene) ──────────────────────────────────
     // Bedeckt den Task-Bereich (unterhalb der 54px-Header).
-    // Drag-Ghost und Overlay werden von Slint 1.17 DragArea nativ gehandhabt.
+    // Drag-Ghost und Overlay werden von Slint 1.18 DragArea nativ gehandhabt.
 
     // ── Tag-Spalten Drop-Linie ───────────────────────────────────────────────
     // drop-line-y ist eine absolute Screen-Y-Koordinate (von TaskRow._cy gesetzt).
@@ -2764,21 +2764,21 @@ export component AppWindow inherits Window {
                             animate border-color { duration: 80ms; }
                             note-scv := ScrollView {
                                 x: 0; y: 0; width: parent.width; height: parent.height;
-                                viewport-width: self.width - 20px;
-                                viewport-height: max(self.height, note-input.preferred-height + 16px);
+                                content-width: self.width - 20px;
+                                content-height: max(self.height, note-input.preferred-height + 16px);
                                 note-input := TextInput {
                                     x: 10px; y: 8px;
-                                    width: parent.viewport-width;
-                                    height: max(parent.viewport-height, self.preferred-height + 16px);
+                                    width: parent.content-width;
+                                    height: max(parent.content-height, self.preferred-height + 16px);
                                     single-line: false; wrap: word-wrap;
                                     font-size: 14px; color: Theme.ink;
                                     text <=> root.note-editor-text;
                                     cursor-position-changed(cpos) => {
-                                        if cpos.y + note-scv.viewport-y < 4px {
-                                            note-scv.viewport-y = -cpos.y + 4px;
+                                        if cpos.y + note-scv.content-y < 4px {
+                                            note-scv.content-y = -cpos.y + 4px;
                                         }
-                                        if cpos.y + note-scv.viewport-y > note-scv.height - 24px {
-                                            note-scv.viewport-y = -(cpos.y - note-scv.height + 24px);
+                                        if cpos.y + note-scv.content-y > note-scv.height - 24px {
+                                            note-scv.content-y = -(cpos.y - note-scv.height + 24px);
                                         }
                                     }
                                 }
@@ -3055,7 +3055,7 @@ export component AppWindow inherits Window {
 
 }
 
-// ─── TuDuTray – System Tray Icon (Slint 1.17) ────────────────────────────────
+// ─── TuDuTray – System Tray Icon (Slint 1.18) ────────────────────────────────
 // SystemTrayIcon muss Root einer exportierten Komponente sein.
 export component TuDuTray inherits SystemTrayIcon {
     icon: @image-url("../assets/icon.png");
